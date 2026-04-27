@@ -1,25 +1,29 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 import json
 import uuid
 
 from scheduler import Scheduler
 from fusion import fuse
 
-# ── Application ────────────────────────────────────────────────────────────
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# ── État global en mémoire ─────────────────────────────────────────────────
+# ── État global ────────────────────────────────────────────────────────────
 scheduler = Scheduler(slot_duration=30, overlap=5)
-
-# { user_id: websocket }
 active_connections: dict = {}
-
-# { slot_index: [ {user_id, text}, ... ] }
 captions: dict = {}
-
 
 # ── Routes HTTP ────────────────────────────────────────────────────────────
 
@@ -35,7 +39,6 @@ async def get_viewer():
 
 @app.get("/status")
 async def get_status():
-    """Endpoint utile pour déboguer : voir l'état du serveur"""
     return {
         "connected_users": scheduler.connected_users(),
         "active_user": scheduler.get_active_user(),
@@ -43,18 +46,17 @@ async def get_status():
         "total_captions": sum(len(v) for v in captions.values()),
     }
 
-
-# ── WebSocket ──────────────────────────────────────────────────────────────
+# ── WebSocket sous-titreurs ────────────────────────────────────────────────
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
 
     user_id = str(uuid.uuid4())[:8]
-    slot = scheduler.assign_slot(user_id)
     active_connections[user_id] = websocket
 
-    # On informe le sous-titreur de son slot (timestamps réels)
+    slot = scheduler.get_or_create_slot(user_id)
+
     await websocket.send_json({
         "type": "slot_assigned",
         "user_id": user_id,
@@ -63,7 +65,6 @@ async def websocket_endpoint(websocket: WebSocket):
         "end_time": slot.end_time,
     })
 
-    # On informe tout le monde qu'un nouveau sous-titreur est connecté
     await broadcast({
         "type": "user_joined",
         "user_id": user_id,
@@ -77,7 +78,6 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             msg = json.loads(data)
 
-            # ── Réception d'un sous-titre ──────────────────────────────────
             if msg["type"] == "caption":
                 slot_index = msg["slot_index"]
                 text = msg["text"].strip()
@@ -85,11 +85,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 if not text:
                     continue
 
-                # Stockage de la contribution
                 if slot_index not in captions:
                     captions[slot_index] = []
 
-                # On met à jour si cet user a déjà soumis pour ce slot
+                # Mise à jour si cet user a déjà soumis pour ce slot
                 existing = next(
                     (c for c in captions[slot_index] if c["user_id"] == user_id),
                     None
@@ -102,7 +101,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         "text": text
                     })
 
-                # Fusion et diffusion
                 contributions = [c["text"] for c in captions[slot_index]]
                 fused_text = fuse(contributions)
 
@@ -118,26 +116,37 @@ async def websocket_endpoint(websocket: WebSocket):
         del active_connections[user_id]
         scheduler.release_slot(user_id)
 
-        # On informe tout le monde
         await broadcast({
             "type": "user_left",
             "user_id": user_id,
             "connected_users": scheduler.connected_users(),
         })
 
+# ── WebSocket viewer ───────────────────────────────────────────────────────
+
+@app.websocket("/ws/viewer")
+async def websocket_viewer(websocket: WebSocket):
+    await websocket.accept()
+    viewer_id = "viewer_" + str(uuid.uuid4())[:4]
+    active_connections[viewer_id] = websocket
+    print(f"📺 Viewer connecté ({viewer_id})")
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        print(f"📺 Viewer déconnecté ({viewer_id})")
+        if viewer_id in active_connections:
+            del active_connections[viewer_id]
 
 # ── Broadcast ──────────────────────────────────────────────────────────────
 
 async def broadcast(message: dict):
-    """Envoie un message à tous les connectés"""
     disconnected = []
     for uid, ws in active_connections.items():
         try:
             await ws.send_json(message)
         except Exception:
             disconnected.append(uid)
-
-    # Nettoyage des connexions mortes
     for uid in disconnected:
         del active_connections[uid]
         scheduler.release_slot(uid)
