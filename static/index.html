@@ -1,8 +1,172 @@
-<!-- PLACEHOLDER - sera remplacé par Dev D (feature/frontend) -->
 <!DOCTYPE html>
-<html>
-<head><title>STC - Sous-titreur</title></head>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>STC - Mon Espace Sous-titrage</title>
+    <style>
+        :root { --primary: #1a73e8; --danger: #d93025; --bg: #f8f9fa; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        
+        /* Overlay de Connexion / Création de compte */
+        #login-overlay { 
+            position: fixed; inset: 0; background: white; 
+            display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 9999; 
+        }
+        .login-card { padding: 40px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); border-radius: 12px; text-align: center; }
+
+        /* Header Personnel */
+        header { background: white; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .user-badge { background: #e8f0fe; color: var(--primary); padding: 5px 15px; border-radius: 20px; font-weight: bold; }
+
+        /* Zone de Travail */
+        main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; }
+        #timer { font-size: 5rem; font-weight: 800; color: #3c4043; transition: color 0.3s; }
+        .my-turn { color: var(--primary) !important; transform: scale(1.1); }
+        .overlap-mode { color: var(--danger) !important; }
+
+        .editor-container { width: 100%; max-width: 900px; position: relative; }
+        textarea { 
+            width: 100%; height: 250px; padding: 25px; border-radius: 15px; 
+            border: 3px solid #dee2e6; font-size: 1.4rem; line-height: 1.6;
+            resize: none; outline: none; transition: all 0.3s;
+        }
+        textarea:focus { border-color: var(--primary); box-shadow: 0 0 15px rgba(26,115,232,0.1); }
+        textarea:disabled { background: #f1f3f4; cursor: not-allowed; border-color: #eee; }
+
+        /* Stats Perso */
+        .stats { margin-top: 20px; display: flex; gap: 20px; color: #70757a; }
+        input[type="text"] { padding: 12px; width: 300px; border: 2px solid #ddd; border-radius: 8px; margin-bottom: 20px; font-size: 1rem; }
+        button { padding: 12px 30px; background: var(--primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+    </style>
+</head>
 <body>
-    <h1>Interface sous-titreur (à venir)</h1>
+
+    <div id="login-overlay">
+        <div class="login-card">
+            <h1 style="color: var(--primary)">STC Project</h1>
+            <p>Créez votre profil ou connectez-vous</p>
+            <input type="text" id="username-input" placeholder="Entrez votre nom complet">
+            <br>
+            <button onclick="connect()">Accéder à mon espace</button>
+        </div>
+    </div>
+
+    <header id="app-header" style="display:none">
+        <div style="font-size: 1.2rem; font-weight: bold;">STC <span style="color:var(--primary)">Live</span></div>
+        <div id="user-info">
+            <span class="user-badge" id="user-display"></span>
+            <span id="pool-display" style="margin-left:10px; color:#5f6368"></span>
+        </div>
+    </header>
+
+    <main id="app-container" style="display:none">
+        <div id="timer">00.0</div>
+        <div class="editor-container">
+            <textarea id="text-input" placeholder="Attendez votre tour pour commencer à saisir..." disabled></textarea>
+        </div>
+        <div class="stats">
+            <div>Caractères envoyés: <span id="char-count">0</span></div>
+            <div>Statut: <span id="work-status">En attente</span></div>
+        </div>
+    </main>
+
+    <script>
+        let ws;
+        let userId = localStorage.getItem('stc_user_id');
+        let totalChars = 0;
+        let currentSlot = 0;
+
+        // Pré-remplir le nom si déjà venu
+        if(localStorage.getItem('stc_username')) {
+            document.getElementById('username-input').value = localStorage.getItem('stc_username');
+        }
+
+        function connect() {
+            const username = document.getElementById('username-input').value;
+            if (!username) return alert("Nom requis !");
+            localStorage.setItem('stc_username', username);
+
+            ws = new WebSocket(`ws://${location.host}/ws`);
+
+            ws.onopen = () => {
+                ws.send(JSON.stringify({
+                    type: "join",
+                    user_id: userId,
+                    username: username
+                }));
+            };
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+
+                if (msg.type === "welcome") {
+                    userId = msg.user_id;
+                    localStorage.setItem('stc_user_id', userId);
+                    
+                    document.getElementById('login-overlay').style.display = 'none';
+                    document.getElementById('app-container').style.display = 'flex';
+                    document.getElementById('app-header').style.display = 'flex';
+                    
+                    document.getElementById('user-display').innerText = username;
+                    document.getElementById('pool-display').innerText = `Pool ${msg.pool_id}`;
+                    
+                    if (msg.state.active) startCountdown(msg.state);
+                }
+
+                if (msg.type === "session_started" || msg.type === "sync_update") {
+                    startCountdown(msg.state);
+                }
+            };
+        }
+
+        function startCountdown(state) {
+            let timeLeft = state.time_left;
+            currentSlot = state.slot_index;
+            const timerDiv = document.getElementById('timer');
+            const area = document.getElementById('text-input');
+            const status = document.getElementById('work-status');
+
+            // Logique de tour : On active l'input si le serveur dit que c'est ok
+            // Note: Le serveur devrait envoyer "is_my_turn: true" dans le futur
+            area.disabled = false; 
+            area.placeholder = "À vous de jouer !";
+            status.innerText = "EN PRODUCTION";
+            timerDiv.classList.add('my-turn');
+
+            if (window.countdownInterval) clearInterval(window.countdownInterval);
+
+            window.countdownInterval = setInterval(() => {
+                timeLeft -= 0.1;
+                if (timeLeft <= 0) {
+                    clearInterval(window.countdownInterval);
+                    area.disabled = true;
+                    status.innerText = "EN PAUSE";
+                    timerDiv.classList.remove('my-turn');
+                    ws.send(JSON.stringify({type: "get_sync"}));
+                }
+                
+                timerDiv.innerText = timeLeft.toFixed(1);
+                
+                if (timeLeft <= 5) timerDiv.classList.add('overlap-mode');
+                else timerDiv.classList.remove('overlap-mode');
+            }, 100);
+        }
+
+        document.getElementById('text-input').onkeyup = (e) => {
+            if (e.key === "Enter") {
+                const val = e.target.value.trim();
+                if(val.length > 0) {
+                    ws.send(JSON.stringify({
+                        type: "caption",
+                        text: val,
+                        slot_index: currentSlot
+                    }));
+                    totalChars += val.length;
+                    document.getElementById('char-count').innerText = totalChars;
+                    e.target.value = "";
+                }
+            }
+        };
+    </script>
 </body>
 </html>

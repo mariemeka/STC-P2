@@ -1,111 +1,142 @@
+import json
+import time
+import uuid
+import os
+from typing import Dict
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
-import json
-import uuid
 
-from scheduler import Scheduler
-from fusion import fuse
+# Tes modules personnels
+from app.logic.scheduler import Scheduler
+from app.core.database import save_caption_to_csv
+from app.core.models import Caption
 
-# ── Création de l'application ──────────────────────────────────────────────
 app = FastAPI()
 
-# Sert les fichiers HTML du dossier static/
+# Création du dossier data s'il n'existe pas
+if not os.path.exists("data"):
+    os.makedirs("data")
+
+# Montage des fichiers statiques
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# ── État global en mémoire (pas de base de données) ───────────────────────
-scheduler = Scheduler(slot_duration=30, overlap=5)
+# État Global
+scheduler = Scheduler()
+connections: Dict[str, WebSocket] = {}
 
-# Dictionnaire de toutes les connexions WebSocket actives
-# { user_id: websocket }
-active_connections: dict = {}
-
-# Toutes les captions reçues
-# { slot_index: [ {user_id, text}, ... ] }
-captions: dict = {}
-
-
-# ── Routes HTTP simples ────────────────────────────────────────────────────
+# ─── ROUTES HTTP ──────────────────────────────────────────────────────────
 
 @app.get("/")
-async def get_subtitler():
-    """Page pour les sous-titreurs"""
+async def get_index():
     with open("static/index.html", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
-@app.get("/viewer")
-async def get_viewer():
-    """Page d'affichage pour le projecteur/prof"""
-    with open("static/viewer.html", encoding="utf-8") as f:
+@app.get("/admin")
+async def get_admin():
+    with open("static/admin.html", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
-
-# ── WebSocket principal ────────────────────────────────────────────────────
+# ─── GESTION DES WEBSOCKETS ────────────────────────────────────────────────
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-
-    # On génère un ID unique pour ce sous-titreur
-    user_id = str(uuid.uuid4())[:8]
-
-    # On lui assigne un slot
-    slot = scheduler.assign_slot(user_id)
-
-    # On l'enregistre dans les connexions actives
-    active_connections[user_id] = websocket
-
-    # On lui envoie son slot assigné
-    await websocket.send_json({
-        "type": "slot_assigned",
-        "user_id": user_id,
-        "slot_index": slot.slot_index,
-        "start_time": slot.start_time,
-        "end_time": slot.end_time,
-    })
-
-    print(f"✅ {user_id} connecté → slot {slot.slot_index}")
-
+    user_id = None
+    
     try:
         while True:
-            # On attend un message du sous-titreur
             data = await websocket.receive_text()
             msg = json.loads(data)
-
-            # Le sous-titreur envoie un sous-titre
-            if msg["type"] == "caption":
-                slot_index = msg["slot_index"]
-                text = msg["text"]
-
-                # On stocke la contribution
-                if slot_index not in captions:
-                    captions[slot_index] = []
-                captions[slot_index].append({
+            
+            # 1. CONNEXION / CRÉATION DE COMPTE PERSO
+            if msg["type"] == "join":
+                # On réutilise l'ID existant ou on en crée un nouveau
+                user_id = msg.get("user_id") or str(uuid.uuid4())[:8]
+                username = msg.get("username", "Anonyme")
+                
+                # Le scheduler assigne l'utilisateur à un pool
+                user = scheduler.add_user(user_id, username)
+                connections[user_id] = websocket
+                
+                # Message de bienvenue avec l'état actuel de la session
+                await websocket.send_json({
+                    "type": "welcome",
                     "user_id": user_id,
-                    "text": text
+                    "pool_id": user.pool_id,
+                    "state": scheduler.get_current_state()
+                })
+                
+                # On prévient l'Admin que la liste des users a changé
+                await broadcast_user_list()
+
+            # 2. CONTRÔLE ADMIN (DÉMARRER / ARRÊTER)
+            elif msg["type"] == "admin_start":
+                scheduler.set_config(
+                    slot_dur=int(msg["slot"]), 
+                    overlap=int(msg["overlap"]), 
+                    pools=int(msg["pools"])
+                )
+                scheduler.config.start_time = time.time()
+                scheduler.config.is_active = True
+                
+                await broadcast({
+                    "type": "session_started", 
+                    "state": scheduler.get_current_state()
                 })
 
-                # On fusionne toutes les contributions de ce slot
-                contributions = [c["text"] for c in captions[slot_index]]
-                fused_text = fuse(contributions)
+            elif msg["type"] == "admin_stop":
+                scheduler.config.is_active = False
+                await broadcast({"type": "session_ended"})
 
-                # On diffuse le résultat fusionné à tout le monde
-                await broadcast({
-                    "type": "fused_caption",
-                    "slot_index": slot_index,
-                    "text": fused_text
+            # 3. RÉCEPTION DU SOUS-TITRE (SAUVEGARDE CSV)
+            elif msg["type"] == "caption":
+                user = scheduler.users.get(user_id)
+                if user and scheduler.config.is_active:
+                    new_caption = Caption(
+                        user_id=user_id,
+                        pool_id=user.pool_id,
+                        text=msg["text"], 
+                        timestamp=time.time(),
+                        slot_index=msg["slot_index"]
+                    )
+                    # Sauvegarde immédiate dans le dossier /data
+                    save_caption_to_csv("live_session", new_caption)
+                    
+                    # Diffusion du texte (pour le futur viewer)
+                    await broadcast({
+                        "type": "new_text", 
+                        "pool": user.pool_id, 
+                        "text": msg["text"],
+                        "user": user.username
+                    })
+
+            # 4. SYNCHRONISATION (ITÉRATION DES SLOTS)
+            elif msg["type"] == "get_sync":
+                await websocket.send_json({
+                    "type": "sync_update",
+                    "state": scheduler.get_current_state()
                 })
 
     except WebSocketDisconnect:
-        # Le sous-titreur s'est déconnecté
-        print(f"❌ {user_id} déconnecté")
-        del active_connections[user_id]
-        scheduler.release_slot(user_id)
+        if user_id in connections:
+            del connections[user_id]
+        await broadcast_user_list()
 
+# ─── UTILITAIRES ───────────────────────────────────────────────────────────
 
-# ── Fonction utilitaire : envoyer un message à tous ───────────────────────
+async def broadcast_user_list():
+    """Envoie la liste des connectés à tout le monde (pour l'admin)"""
+    user_list = [{"id": u.user_id, "name": u.username, "pool": u.pool_id} for u in scheduler.users.values()]
+    await broadcast({
+        "type": "user_update",
+        "users": user_list
+    })
 
-async def broadcast(message: dict):
-    """Envoie un message JSON à tous les connectés"""
-    for ws in active_connections.values():
-        await ws.send_json(message)
+async def broadcast(data: dict):
+    """Envoie un message à tous les sockets actifs"""
+    for ws in list(connections.values()):
+        try:
+            await ws.send_json(data)
+        except:
+            pass
