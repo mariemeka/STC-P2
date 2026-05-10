@@ -10,6 +10,7 @@ Interface imposee par main.py :
 """
 
 from functools import reduce
+from itertools import permutations
 from difflib import SequenceMatcher
 
 
@@ -36,8 +37,22 @@ def fuse(contributions: list[str]) -> str:
         return ""
     if len(cleaned) == 1:
         return cleaned[0]
+    if len(cleaned) == 2:
+        return _merge_two(cleaned[0], cleaned[1])
 
-    return reduce(_merge_two, cleaned)
+    # 3+ contributions : l'ordre d'arrivee n'est pas forcement le bon ordre
+    # narratif. On essaie toutes les permutations et on garde la plus courte
+    # (= plus d'overlap detecte = moins de redondance). Limite a 5 contribs
+    # pour eviter l'explosion combinatoire (5! = 120).
+    if len(cleaned) > 5:
+        return reduce(_merge_two, cleaned)
+
+    best = None
+    for perm in permutations(cleaned):
+        merged = reduce(_merge_two, perm)
+        if best is None or len(merged) < len(best):
+            best = merged
+    return best
 
 
 def _merge_two(a: str, b: str) -> str:
@@ -50,6 +65,14 @@ def _merge_two(a: str, b: str) -> str:
     words_a = a.split()
     words_b = b.split()
 
+    # Si une contribution est entierement contenue dans l'autre (cas
+    # multi-locuteur ou plusieurs personnes transcrivent le meme passage
+    # avec des vues partielles qui se recouvrent), on garde la plus longue.
+    if _contained(words_a, words_b):
+        return a
+    if _contained(words_b, words_a):
+        return b
+
     # On cherche le plus grand k tel que les k derniers mots de A
     # correspondent (de maniere tolerante) aux k premiers mots de B.
     max_k = min(len(words_a), len(words_b))
@@ -61,6 +84,18 @@ def _merge_two(a: str, b: str) -> str:
 
     # Aucun overlap trouve : on concatene avec un espace
     return a + " " + b
+
+
+def _contained(big: list[str], small: list[str]) -> bool:
+    """True si `small` apparait comme sous-sequence contigue de `big` (avec fuzzy)."""
+    if not small:
+        return True
+    if len(small) > len(big):
+        return False
+    for i in range(len(big) - len(small) + 1):
+        if all(_similar(big[i + j], small[j]) for j in range(len(small))):
+            return True
+    return False
 
 
 def _words_match(suffix: list[str], prefix: list[str]) -> bool:
@@ -140,6 +175,30 @@ if __name__ == "__main__":
             "textes identiques (cas limite)",
             ["bonjour tout le monde", "bonjour tout le monde"],
             "bonjour tout le monde",
+        ),
+        (
+            "contribution courte contenue dans la longue",
+            ["le chat noir dort sur le tapis", "noir dort sur"],
+            "le chat noir dort sur le tapis",
+        ),
+        (
+            "contribution longue qui englobe la courte",
+            ["chat noir", "le chat noir dort sur le tapis"],
+            "le chat noir dort sur le tapis",
+        ),
+        (
+            "trois vues partielles parallele (cas multi-locuteur)",
+            [
+                "Bonjour a tous et bienvenue",
+                "tous et bienvenue dans cette presentation",
+                "a tous et bienvenue dans",
+            ],
+            "Bonjour a tous et bienvenue dans cette presentation",
+        ),
+        (
+            "vue interne avec faute de frappe (fuzzy + contained)",
+            ["le chat noir dort sur le tapis", "noir dort sur le tappis"],
+            "le chat noir dort sur le tapis",
         ),
     ]
 

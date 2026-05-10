@@ -1,8 +1,483 @@
-<!-- PLACEHOLDER - sera remplacé par Dev D (feature/frontend) -->
 <!DOCTYPE html>
-<html>
-<head><title>STC - Sous-titreur</title></head>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STC — Sous-titreur</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      margin: 0;
+      padding: 24px;
+      min-height: 100vh;
+    }
+    .container { max-width: 820px; margin: 0 auto; }
+    h1 { margin: 0 0 4px; font-size: 26px; }
+    .subtitle { color: #94a3b8; margin-bottom: 20px; font-size: 14px; }
+
+    #status {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 18px;
+    }
+    .status-connecting { background: #facc15; color: #422006; }
+    .status-connected  { background: #22c55e; color: #052e16; }
+    .status-error      { background: #ef4444; color: #450a0a; }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .card-label {
+      font-size: 11px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+    .card-value { font-size: 20px; font-weight: 700; }
+    .card-value.range { font-size: 16px; font-variant-numeric: tabular-nums; color: #93c5fd; }
+
+    .audio-panel {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 18px;
+    }
+    .audio-panel.no-audio { opacity: 0.6; }
+    .audio-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .audio-row + .audio-row { margin-top: 10px; }
+    .audio-progress {
+      flex: 1;
+      height: 6px;
+      background: #0f172a;
+      border-radius: 999px;
+      overflow: hidden;
+      min-width: 100px;
+    }
+    .audio-progress-bar {
+      height: 100%;
+      background: #22c55e;
+      width: 0%;
+      transition: width 200ms linear;
+    }
+    .audio-time {
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      color: #94a3b8;
+      min-width: 90px;
+      text-align: right;
+    }
+    .audio-info { font-size: 12px; color: #94a3b8; }
+    .audio-info.empty { font-style: italic; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #e2e8f0;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 120ms;
+      font-family: inherit;
+    }
+    .btn:hover:not(:disabled) { background: #334155; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn.primary { background: #1e40af; border-color: #2563eb; color: #dbeafe; }
+    .btn.primary:hover:not(:disabled) { background: #2563eb; }
+    .btn.success { background: #14532d; border-color: #22c55e; color: #bbf7d0; }
+    .btn.success:hover:not(:disabled) { background: #166534; }
+
+    label { display: block; font-size: 14px; color: #94a3b8; margin-bottom: 8px; }
+    textarea {
+      width: 100%;
+      min-height: 130px;
+      padding: 14px;
+      background: #1e293b;
+      color: #f1f5f9;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      font-size: 16px;
+      font-family: inherit;
+      line-height: 1.5;
+      resize: vertical;
+    }
+    textarea:focus { outline: 2px solid #3b82f6; border-color: #3b82f6; }
+    textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .actions-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .fused {
+      background: #0c2a4a;
+      border: 1px solid #1e40af;
+      padding: 16px;
+      border-radius: 10px;
+      margin-top: 22px;
+    }
+    .fused-label { color: #93c5fd; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
+    .fused-text { font-size: 17px; line-height: 1.5; min-height: 24px; }
+    .fused-text.empty { color: #64748b; font-style: italic; }
+    .fused-meta { font-size: 12px; color: #93c5fd; margin-top: 10px; }
+
+    .export-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 22px;
+      justify-content: flex-end;
+    }
+
+    .completed-banner {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px;
+      background: #14532d;
+      border: 1px solid #22c55e;
+      border-radius: 10px;
+      margin-top: 18px;
+      color: #bbf7d0;
+    }
+    .completed-banner.visible { display: flex; }
+
+    .lobby-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.96);
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      flex-direction: column;
+      gap: 18px;
+      backdrop-filter: blur(8px);
+    }
+    .lobby-overlay.visible { display: flex; }
+    .lobby-spinner {
+      width: 56px;
+      height: 56px;
+      border: 4px solid #334155;
+      border-top-color: #facc15;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .lobby-title { font-size: 22px; color: #facc15; font-weight: 600; }
+    .lobby-msg { font-size: 14px; color: #cbd5e1; max-width: 440px; text-align: center; line-height: 1.5; }
+    .lobby-id {
+      font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+      background: #1e293b;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      color: #93c5fd;
+      border: 1px solid #334155;
+    }
+  </style>
+</head>
 <body>
-    <h1>Interface sous-titreur (à venir)</h1>
+  <div class="container">
+    <h1>STC — Sous-titreur</h1>
+    <div class="subtitle">Tu transcris ta portion d'audio. Quand tu as fini, tu cliques "Soumettre" et tu reçois la suivante.</div>
+
+    <div id="status" class="status-connecting">Connexion…</div>
+
+    <div class="info-grid">
+      <div class="card">
+        <div class="card-label">Toi</div>
+        <div class="card-value" id="user-id">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Mon chunk</div>
+        <div class="card-value" id="slot-index">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Ma portion audio</div>
+        <div class="card-value range" id="audio-range">—</div>
+      </div>
+    </div>
+
+    <div class="audio-panel no-audio" id="audio-panel">
+      <div class="audio-row">
+        <button class="btn primary" id="btn-play" disabled>▶ Écouter ma portion</button>
+        <button class="btn" id="btn-replay" disabled>↺ Réécouter</button>
+        <div class="audio-progress"><div class="audio-progress-bar" id="audio-bar"></div></div>
+        <div class="audio-time" id="audio-time">0.0s / 0.0s</div>
+      </div>
+      <div class="audio-row">
+        <div class="audio-info empty" id="audio-info">En attente d'un fichier audio (l'admin doit l'uploader).</div>
+      </div>
+    </div>
+    <audio id="audio" preload="auto"></audio>
+
+    <label for="caption-input">Mon sous-titre</label>
+    <textarea id="caption-input" placeholder="Tape ton sous-titre ici…" disabled></textarea>
+
+    <div class="actions-row">
+      <button class="btn success" id="btn-submit" disabled>✓ Soumettre et chunk suivant</button>
+    </div>
+
+    <div class="fused">
+      <div class="fused-label">Mon texte fusionné — chunk <span id="fused-slot">—</span></div>
+      <div class="fused-text empty" id="fused-text">Tu n'as encore rien tapé.</div>
+      <div class="fused-meta">
+        <span id="connected-count">0</span> sous-titreur(s) connecté(s)
+      </div>
+    </div>
+
+    <div class="completed-banner" id="completed-banner">
+      <span>✓</span>
+      <span>Chunk soumis. Le suivant est <strong id="next-info"></strong>.</span>
+    </div>
+
+    <div class="export-row">
+      <a class="btn" href="/export.srt" download>↓ Exporter .srt</a>
+      <a class="btn" href="/export.txt" download>↓ Exporter .txt</a>
+    </div>
+  </div>
+
+  <div class="lobby-overlay visible" id="lobby-overlay">
+    <div class="lobby-spinner"></div>
+    <div class="lobby-title">⏳ En attente de l'admin</div>
+    <div class="lobby-msg" id="lobby-msg">L'admin doit te confirmer avant que tu puisses commencer à transcrire ton chunk.</div>
+    <div class="lobby-id" id="lobby-id">connexion…</div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${wsProto}//${location.host}/ws`);
+
+    let mySlotIndex = null;
+    let myAudioStart = null;
+    let myAudioEnd = null;
+    let audioUrl = null;
+    let sendHandle = null;
+    let audioCheckHandle = null;
+    let myUserId = null;
+
+    const audioEl = $("audio");
+
+    function setStatus(text, cls) {
+      const el = $("status");
+      el.textContent = text;
+      el.className = cls;
+    }
+
+    function fmt(s) { return `${s.toFixed(1)}s`; }
+
+    function refreshAudioPanel() {
+      $("audio-panel").classList.toggle("no-audio", !audioUrl);
+      const hasSlot = mySlotIndex !== null;
+      $("btn-play").disabled = !audioUrl || !hasSlot;
+      $("btn-replay").disabled = !audioUrl || !hasSlot;
+      if (audioUrl) {
+        $("audio-info").classList.remove("empty");
+        $("audio-info").textContent = `Source: ${audioUrl.split("/").pop()}`;
+      } else {
+        $("audio-info").classList.add("empty");
+        $("audio-info").textContent = "En attente d'un fichier audio (l'admin doit l'uploader).";
+      }
+    }
+
+    function updateAudioUI() {
+      if (myAudioStart === null) return;
+      const dur = myAudioEnd - myAudioStart;
+      const pos = Math.max(0, Math.min(dur, audioEl.currentTime - myAudioStart));
+      $("audio-bar").style.width = `${(pos / dur) * 100}%`;
+      $("audio-time").textContent = `${fmt(pos)} / ${fmt(dur)}`;
+      // Auto-pause si on depasse la fin du chunk
+      if (audioEl.currentTime >= myAudioEnd && !audioEl.paused) {
+        audioEl.pause();
+      }
+    }
+
+    function applyNewSlot(msg) {
+      mySlotIndex = msg.slot_index;
+      myAudioStart = msg.audio_start;
+      myAudioEnd = msg.audio_end;
+      if (msg.audio_url) audioUrl = msg.audio_url;
+      if (msg.user_id) {
+        myUserId = msg.user_id;
+        $("user-id").textContent = msg.user_id;
+      }
+      $("slot-index").textContent = `#${msg.slot_index}`;
+      $("audio-range").textContent = `${fmt(myAudioStart)} → ${fmt(myAudioEnd)}`;
+      $("fused-slot").textContent = msg.slot_index;
+      $("caption-input").value = "";
+      $("caption-input").disabled = false;
+      $("fused-text").textContent = "Tu n'as encore rien tapé.";
+      $("fused-text").classList.add("empty");
+      $("btn-submit").disabled = false;
+      $("completed-banner").classList.remove("visible");
+      if (audioUrl && audioEl.src !== location.origin + audioUrl) {
+        audioEl.src = audioUrl;
+      }
+      refreshAudioPanel();
+      updateAudioUI();
+    }
+
+    ws.addEventListener("open", () => setStatus("Connecté", "status-connected"));
+    ws.addEventListener("close", () => {
+      setStatus("Déconnecté — recharge la page", "status-error");
+      $("caption-input").disabled = true;
+      $("btn-submit").disabled = true;
+      $("btn-play").disabled = true;
+    });
+    ws.addEventListener("error", () => setStatus("Erreur de connexion", "status-error"));
+
+    function showLobby(message) {
+      $("lobby-overlay").classList.add("visible");
+      if (message) $("lobby-msg").textContent = message;
+      // Reset UI au cas ou
+      mySlotIndex = null;
+      myAudioStart = null;
+      myAudioEnd = null;
+      $("caption-input").value = "";
+      $("caption-input").disabled = true;
+      $("btn-submit").disabled = true;
+      $("slot-index").textContent = "—";
+      $("audio-range").textContent = "—";
+      $("fused-text").textContent = "Tu n'as encore rien tapé.";
+      $("fused-text").classList.add("empty");
+      $("completed-banner").classList.remove("visible");
+      audioEl.pause();
+    }
+
+    function hideLobby() {
+      $("lobby-overlay").classList.remove("visible");
+    }
+
+    ws.addEventListener("message", (e) => {
+      const msg = JSON.parse(e.data);
+      switch (msg.type) {
+        case "pending":
+          myUserId = msg.user_id;
+          $("user-id").textContent = msg.user_id;
+          $("lobby-id").textContent = `Mon id : ${msg.user_id}`;
+          showLobby(msg.message);
+          break;
+
+        case "session_reset":
+          showLobby("Session réinitialisée par l'admin. En attente d'une nouvelle confirmation.");
+          break;
+
+        case "slot_assigned":
+          hideLobby();
+          applyNewSlot(msg);
+          break;
+
+        case "user_joined":
+        case "user_left":
+          $("connected-count").textContent = msg.connected_users.length;
+          break;
+
+        case "audio_available":
+          audioUrl = msg.url;
+          if (audioEl.src !== location.origin + msg.url) audioEl.src = msg.url;
+          refreshAudioPanel();
+          break;
+
+        case "audio_start":
+          // Session globale demarree par l'admin -> joue MA portion
+          if (msg.url && audioEl.src !== location.origin + msg.url) audioEl.src = msg.url;
+          audioUrl = msg.url || audioUrl;
+          if (myAudioStart !== null) playMyChunk();
+          refreshAudioPanel();
+          break;
+
+        case "audio_stop":
+          audioEl.pause();
+          break;
+
+        case "fused_caption":
+          if (msg.slot_index === mySlotIndex) {
+            const txt = $("fused-text");
+            if (msg.text) {
+              txt.textContent = msg.text;
+              txt.classList.remove("empty");
+            } else {
+              txt.textContent = "Tu n'as encore rien tapé.";
+              txt.classList.add("empty");
+            }
+          }
+          break;
+      }
+    });
+
+    function sendCaption() {
+      if (mySlotIndex === null || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({
+        type: "caption",
+        slot_index: mySlotIndex,
+        text: $("caption-input").value,
+      }));
+    }
+
+    function playMyChunk() {
+      if (myAudioStart === null || !audioUrl) return;
+      audioEl.currentTime = myAudioStart;
+      audioEl.play().catch((err) => {
+        console.warn("Autoplay bloqué — clique sur ▶ Écouter ma portion", err);
+      });
+    }
+
+    $("caption-input").addEventListener("input", () => {
+      if (sendHandle) clearTimeout(sendHandle);
+      sendHandle = setTimeout(sendCaption, 250);
+    });
+
+    $("btn-play").addEventListener("click", playMyChunk);
+    $("btn-replay").addEventListener("click", playMyChunk);
+
+    $("btn-submit").addEventListener("click", () => {
+      if (mySlotIndex === null || ws.readyState !== WebSocket.OPEN) return;
+      // Push une derniere fois le texte courant
+      sendCaption();
+      // Marque comme soumis
+      ws.send(JSON.stringify({ type: "submit", slot_index: mySlotIndex }));
+      $("btn-submit").disabled = true;
+      $("caption-input").disabled = true;
+      $("completed-banner").classList.add("visible");
+      $("next-info").textContent = "en cours d'attribution…";
+      audioEl.pause();
+    });
+
+    audioEl.addEventListener("timeupdate", updateAudioUI);
+    audioEl.addEventListener("ended", () => audioEl.pause());
+
+    refreshAudioPanel();
+  </script>
 </body>
 </html>

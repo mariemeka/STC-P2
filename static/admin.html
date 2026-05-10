@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STC — Admin</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      margin: 0;
+      padding: 24px;
+    }
+    .container { max-width: 1100px; margin: 0 auto; }
+    h1 { margin: 0 0 4px; font-size: 24px; }
+    .subtitle { color: #94a3b8; margin-bottom: 22px; font-size: 13px; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+      margin-bottom: 22px;
+    }
+    .stat {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .stat-label {
+      font-size: 11px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+    .stat-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .stat-value.active { color: #22c55e; }
+
+    h2 {
+      font-size: 14px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 24px 0 10px;
+    }
+
+    .users {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .user-pill {
+      background: #1e293b;
+      border: 1px solid #334155;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+    }
+    .user-pill.active {
+      background: #14532d;
+      border-color: #22c55e;
+      color: #bbf7d0;
+    }
+    .users-empty { color: #64748b; font-size: 13px; font-style: italic; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid #334155;
+      font-size: 13px;
+      vertical-align: top;
+    }
+    th {
+      background: #0f1a30;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 11px;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr.active-row { background: rgba(34, 197, 94, 0.08); }
+    .mono { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 12px; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      background: #334155;
+      color: #cbd5e1;
+    }
+    .badge.green { background: #14532d; color: #86efac; }
+    .text-preview {
+      max-width: 320px;
+      color: #cbd5e1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .text-preview.empty { color: #475569; font-style: italic; }
+    .empty-row td { text-align: center; color: #64748b; font-style: italic; padding: 24px; }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 24px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 16px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #e2e8f0;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 120ms;
+    }
+    .btn:hover { background: #334155; }
+    .btn.primary { background: #1e40af; border-color: #2563eb; }
+    .btn.primary:hover { background: #2563eb; }
+
+    .status-line {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      background: #334155;
+      color: #94a3b8;
+      margin-left: 8px;
+    }
+    .status-line.live { background: #14532d; color: #86efac; }
+    .status-line.error { background: #7f1d1d; color: #fecaca; }
+
+    .audio-panel {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 18px;
+      margin-top: 12px;
+    }
+    .audio-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .audio-row + .audio-row { margin-top: 10px; }
+    .audio-info {
+      flex: 1;
+      min-width: 200px;
+      font-size: 13px;
+      color: #cbd5e1;
+    }
+    .audio-info .filename { font-weight: 600; }
+    .audio-info .meta { color: #94a3b8; font-size: 12px; }
+    .audio-info.empty { color: #64748b; font-style: italic; }
+    .audio-state-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      background: #334155;
+      color: #94a3b8;
+      letter-spacing: 0.04em;
+    }
+    .audio-state-badge.playing { background: #14532d; color: #86efac; }
+    input[type="file"] {
+      flex: 1;
+      min-width: 200px;
+      padding: 6px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+    .btn.danger { background: #7f1d1d; border-color: #ef4444; color: #fecaca; }
+    .btn.danger:hover { background: #991b1b; }
+    .btn.success { background: #14532d; border-color: #22c55e; color: #bbf7d0; }
+    .btn.success:hover { background: #166534; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn:disabled:hover { background: #1e293b; }
+    audio { width: 100%; max-width: 500px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>STC — Admin <span class="status-line" id="status">connecting…</span></h1>
+    <div class="subtitle">Vue temps réel des slots, des contributeurs et des contributions. Rafraîchi toutes les secondes.</div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">Connectés</div>
+        <div class="stat-value" id="connected-count">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Total chunks</div>
+        <div class="stat-value" id="total-slots">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Chunks terminés</div>
+        <div class="stat-value active" id="completed-slots">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Total contributions</div>
+        <div class="stat-value" id="total-captions">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Config (durée / overlap)</div>
+        <div class="stat-value mono" id="config">—</div>
+      </div>
+    </div>
+
+    <h2>Lobby <span class="status-line" id="pending-count" style="background:#7f1d1d;color:#fecaca">0</span></h2>
+    <div id="pending-list" class="users-empty">Aucun sous-titreur en attente.</div>
+
+    <h2>Sous-titreurs confirmés</h2>
+    <div id="users" class="users-empty">Aucun sous-titreur confirmé.</div>
+
+    <h2>Chunks audio</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Portion audio</th>
+          <th>Assigné à</th>
+          <th>État</th>
+          <th>Texte transcrit</th>
+        </tr>
+      </thead>
+      <tbody id="slots-body">
+        <tr class="empty-row"><td colspan="5">Aucun chunk encore. Connecte un sous-titreur pour commencer.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Audio partagé <span id="audio-state-badge" class="audio-state-badge">aucun</span></h2>
+    <div class="audio-panel">
+      <div class="audio-row">
+        <div class="audio-info empty" id="audio-info">
+          Aucun fichier audio chargé.
+        </div>
+      </div>
+      <div class="audio-row">
+        <input type="file" id="audio-file" accept="audio/*">
+        <button class="btn" id="audio-upload-btn">↑ Uploader</button>
+      </div>
+      <div class="audio-row">
+        <button class="btn success" id="audio-start-btn" disabled>▶ Démarrer la session</button>
+        <button class="btn danger" id="audio-stop-btn" disabled>■ Arrêter</button>
+      </div>
+      <div class="audio-row">
+        <audio id="audio-preview" controls></audio>
+      </div>
+    </div>
+
+    <div class="actions">
+      <a class="btn primary" href="/export.srt" download>↓ Télécharger .srt</a>
+      <a class="btn" href="/export.txt" download>↓ Télécharger .txt</a>
+      <a class="btn" href="/viewer" target="_blank">↗ Ouvrir le viewer</a>
+      <a class="btn" href="/" target="_blank">↗ Ouvrir un sous-titreur</a>
+      <button class="btn danger" id="btn-reset" style="margin-left:auto">⟲ Reset session</button>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      })[c]);
+    }
+
+    function fmtRange(start, end) {
+      return `${start.toFixed(1)}s → ${end.toFixed(1)}s`;
+    }
+
+    async function refresh() {
+      try {
+        const r = await fetch("/admin/data", { cache: "no-store" });
+        if (!r.ok) throw new Error(r.status);
+        const d = await r.json();
+
+        $("status").textContent = "live";
+        $("status").className = "status-line live";
+
+        $("connected-count").textContent = d.connected_users.length;
+        $("total-slots").textContent = d.total_slots;
+        $("completed-slots").textContent = `${d.completed_slots}/${d.total_slots}`;
+        $("total-captions").textContent = d.total_captions;
+        $("config").textContent = `${d.slot_duration}s / ${d.overlap}s`;
+
+        // Lobby (users en attente de confirmation)
+        const pending = d.pending_users || [];
+        $("pending-count").textContent = pending.length;
+        $("pending-count").style.background = pending.length > 0 ? "#7f1d1d" : "#334155";
+        const pendingEl = $("pending-list");
+        if (pending.length === 0) {
+          pendingEl.className = "users-empty";
+          pendingEl.textContent = "Aucun sous-titreur en attente.";
+        } else {
+          pendingEl.className = "users";
+          pendingEl.innerHTML = pending.map(u => `
+            <span class="user-pill" style="background:#422006;border-color:#facc15;color:#fef3c7">
+              <span style="font-family:ui-monospace,Menlo,monospace">${escapeHtml(u)}</span>
+              <button class="btn success" data-confirm-user="${escapeHtml(u)}" style="padding:3px 10px;margin-left:8px;font-size:11px">✓ Confirmer</button>
+            </span>
+          `).join("");
+        }
+
+        // Users confirmés
+        const usersEl = $("users");
+        const confirmed = d.confirmed_users || [];
+        if (confirmed.length === 0) {
+          usersEl.className = "users-empty";
+          usersEl.textContent = "Aucun sous-titreur confirmé.";
+        } else {
+          usersEl.className = "users";
+          usersEl.innerHTML = confirmed.map(u => {
+            const isActive = u === d.active_user;
+            return `<span class="user-pill${isActive ? ' active' : ''}">${escapeHtml(u)}${isActive ? ' • actif' : ''}</span>`;
+          }).join("");
+        }
+
+        // Slots table
+        const tbody = $("slots-body");
+        if (d.slots.length === 0) {
+          tbody.innerHTML = `<tr class="empty-row"><td colspan="5">Aucun chunk encore. Connecte un sous-titreur pour commencer.</td></tr>`;
+        } else {
+          tbody.innerHTML = d.slots.slice().reverse().map(s => {
+            const txt = s.text
+              ? `<div class="text-preview">${escapeHtml(s.text)}</div>`
+              : `<div class="text-preview empty">—</div>`;
+            const assigned = s.assigned_to
+              ? `<span class="mono">${escapeHtml(s.assigned_to)}</span>`
+              : `<span style="color:#64748b">libre</span>`;
+            let stateBadge;
+            if (s.completed) {
+              stateBadge = `<span class="badge green">✓ terminé</span>`;
+            } else if (s.assigned_to) {
+              stateBadge = `<span class="badge" style="background:#1e3a8a;color:#bfdbfe">en cours</span>`;
+            } else {
+              stateBadge = `<span class="badge">en attente</span>`;
+            }
+            return `
+              <tr class="${!s.completed && s.assigned_to ? 'active-row' : ''}">
+                <td class="mono">${s.index}</td>
+                <td class="mono">${fmtRange(s.audio_start, s.audio_end)}</td>
+                <td>${assigned}</td>
+                <td>${stateBadge}</td>
+                <td>${txt}</td>
+              </tr>
+            `;
+          }).join("");
+        }
+        // Audio state
+        const a = d.audio || {};
+        const badge = $("audio-state-badge");
+        const info = $("audio-info");
+        const startBtn = $("audio-start-btn");
+        const stopBtn = $("audio-stop-btn");
+        const preview = $("audio-preview");
+
+        if (a.is_playing) {
+          badge.textContent = `lecture (${a.elapsed_s}s)`;
+          badge.className = "audio-state-badge playing";
+        } else if (a.url) {
+          badge.textContent = "prêt";
+          badge.className = "audio-state-badge";
+        } else {
+          badge.textContent = "aucun";
+          badge.className = "audio-state-badge";
+        }
+
+        if (a.url) {
+          info.classList.remove("empty");
+          info.innerHTML = `<div class="filename">${escapeHtml(a.filename || "audio")}</div>
+                            <div class="meta">URL: ${escapeHtml(a.url)}</div>`;
+          if (preview.src !== location.origin + a.url) preview.src = a.url;
+          startBtn.disabled = a.is_playing;
+          stopBtn.disabled = !a.is_playing;
+        } else {
+          info.classList.add("empty");
+          info.textContent = "Aucun fichier audio chargé.";
+          startBtn.disabled = true;
+          stopBtn.disabled = true;
+        }
+      } catch (e) {
+        $("status").textContent = "erreur";
+        $("status").className = "status-line error";
+      }
+    }
+
+    // Audio controls
+    $("audio-upload-btn").addEventListener("click", async () => {
+      const fileInput = $("audio-file");
+      if (!fileInput.files[0]) {
+        alert("Sélectionne d'abord un fichier audio");
+        return;
+      }
+      const fd = new FormData();
+      fd.append("file", fileInput.files[0]);
+      const r = await fetch("/audio/upload", { method: "POST", body: fd });
+      if (!r.ok) {
+        const err = await r.text();
+        alert("Erreur upload: " + err);
+        return;
+      }
+      const j = await r.json();
+      console.log("Upload OK:", j);
+      refresh();
+    });
+
+    $("audio-start-btn").addEventListener("click", async () => {
+      const r = await fetch("/audio/start", { method: "POST" });
+      if (!r.ok) alert("Erreur démarrage: " + await r.text());
+      refresh();
+    });
+
+    $("audio-stop-btn").addEventListener("click", async () => {
+      const r = await fetch("/audio/stop", { method: "POST" });
+      if (!r.ok) alert("Erreur arrêt: " + await r.text());
+      refresh();
+    });
+
+    // Confirmation des users en lobby (delegation pour les boutons dynamiques)
+    document.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-confirm-user]");
+      if (!btn) return;
+      const uid = btn.dataset.confirmUser;
+      btn.disabled = true;
+      const r = await fetch(`/admin/confirm/${uid}`, { method: "POST" });
+      if (!r.ok) {
+        alert("Erreur confirmation: " + await r.text());
+        btn.disabled = false;
+        return;
+      }
+      refresh();
+    });
+
+    // Reset session
+    $("btn-reset").addEventListener("click", async () => {
+      if (!confirm("Reset la session ?\n\n— Vide tous les chunks et contributions\n— Tous les sous-titreurs retournent en lobby (et il faudra les reconfirmer)\n— L'audio uploadé est conservé\n\nContinuer ?")) return;
+      const r = await fetch("/admin/reset", { method: "POST" });
+      if (!r.ok) alert("Erreur reset: " + await r.text());
+      refresh();
+    });
+
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>

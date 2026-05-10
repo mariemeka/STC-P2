@@ -1,2 +1,11 @@
 __pycache__/
 *.pyc
+venv/
+.venv/
+
+# Fichiers audio uploades par l'admin (volumineux, regeneres par les users)
+static/audio/
+
+# Assets de demo (audio, presentation) — pas dans le repo
+demo-audio.wav
+*.pptx

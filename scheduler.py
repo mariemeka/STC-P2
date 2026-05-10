@@ -1,18 +1,32 @@
-import time
+"""Scheduler de chunks audio (architecture distribuee, single-pass).
+
+Chaque sous-titreur recoit un chunk unique a transcrire. Quand il a fini,
+il recoit le suivant (rotation si plus de chunks que de users connectes).
+Les bornes de chaque slot N sont [N*step, N*step + duration] avec
+step = duration - overlap. Slot 0 = [0, 30], slot 1 = [25, 55], etc.
+"""
 from dataclasses import dataclass
 from typing import Optional
 
+
 @dataclass
 class Slot:
-    slot_index:  int
-    start_time:  float
-    end_time:    float
-    assigned_to: Optional[str] = None
+    """Un slot = une portion d'audio assignee a un sous-titreur.
 
+    audio_start / audio_end : offsets en secondes DANS le fichier audio.
+    Deux slots consecutifs se chevauchent de `overlap`s pour permettre
+    la fusion d'overlap aux frontieres.
+    """
+    slot_index:  int
+    audio_start: float
+    audio_end:   float
+    assigned_to: Optional[str] = None
+    completed:   bool = False
+    # Aliases pour retro-compat avec /admin/data et /export
     @property
-    def is_active(self) -> bool:
-        now = time.time()
-        return self.assigned_to is not None and self.start_time <= now <= self.end_time
+    def start_time(self) -> float: return self.audio_start
+    @property
+    def end_time(self) -> float: return self.audio_end
 
 
 class Scheduler:
@@ -21,55 +35,80 @@ class Scheduler:
         self.overlap = overlap
         self.slots: list[Slot] = []
         self._user_order: list[str] = []
-        self._next_slot_start: float = time.time()
 
-    def assign_slot(self, user_id: str) -> Slot:
-        if user_id not in self._user_order:
-            self._user_order.append(user_id)
-        start = max(self._next_slot_start, time.time())
-        end = start + self.slot_duration
-        slot = Slot(slot_index=len(self.slots), start_time=start,
-                    end_time=end, assigned_to=user_id)
-        self.slots.append(slot)
-        self._next_slot_start = end - self.overlap
-        return slot
+    # ── Lookup ─────────────────────────────────────────────────────────────
 
-    def get_or_create_slot(self, user_id: str) -> Slot:  # ← méthode ajoutée
-        if user_id not in self._user_order:
-            self._user_order.append(user_id)
-        now = time.time()
-        for slot in reversed(self.slots):
-            if slot.start_time <= now <= slot.end_time:
-                return slot
-        start = max(self._next_slot_start, now)
-        end = start + self.slot_duration
-        slot = Slot(slot_index=len(self.slots), start_time=start,
-                    end_time=end, assigned_to=user_id)
-        self.slots.append(slot)
-        self._next_slot_start = end - self.overlap
-        return slot
-
-    def release_slot(self, user_id: str):
-        if user_id in self._user_order:
-            self._user_order.remove(user_id)
+    def slot_of(self, user_id: str) -> Optional[Slot]:
+        """Slot actuellement assigne (non-complete) pour ce user, ou None."""
         for slot in self.slots:
-            if slot.assigned_to == user_id:
-                slot.assigned_to = None
-
-    def get_active_user(self) -> Optional[str]:
-        now = time.time()
-        for slot in reversed(self.slots):
-            if slot.assigned_to and slot.start_time <= now <= slot.end_time:
-                return slot.assigned_to
+            if slot.assigned_to == user_id and not slot.completed:
+                return slot
         return None
-
-    def next_in_rotation(self, after_user_id: str) -> Optional[str]:
-        if not self._user_order:
-            return None
-        if after_user_id not in self._user_order:
-            return self._user_order[0]
-        idx = self._user_order.index(after_user_id)
-        return self._user_order[(idx + 1) % len(self._user_order)]
 
     def connected_users(self) -> list[str]:
         return list(self._user_order)
+
+    def get_active_user(self) -> Optional[str]:
+        """Premier user ayant un slot non-complete (utilise par /admin/data)."""
+        for slot in self.slots:
+            if slot.assigned_to and not slot.completed:
+                return slot.assigned_to
+        return None
+
+    # ── Mutations ──────────────────────────────────────────────────────────
+
+    def assign(self, user_id: str) -> Slot:
+        """Donne un slot au user. Reuse son slot actif s'il en a un, sinon
+        prend un slot libere par une deconnexion, sinon en cree un nouveau."""
+        if user_id not in self._user_order:
+            self._user_order.append(user_id)
+
+        existing = self.slot_of(user_id)
+        if existing:
+            return existing
+
+        # Recyclage : un user precedent s'est deconnecte sans terminer
+        for slot in self.slots:
+            if slot.assigned_to is None and not slot.completed:
+                slot.assigned_to = user_id
+                return slot
+
+        # Sinon : nouveau slot a la suite
+        next_index = len(self.slots)
+        step = self.slot_duration - self.overlap
+        audio_start = next_index * step
+        audio_end = audio_start + self.slot_duration
+        slot = Slot(
+            slot_index=next_index,
+            audio_start=audio_start,
+            audio_end=audio_end,
+            assigned_to=user_id,
+        )
+        self.slots.append(slot)
+        return slot
+
+    def mark_completed(self, user_id: str, slot_index: int) -> Slot:
+        """Marque le slot de user_id comme termine, puis assigne le suivant."""
+        if 0 <= slot_index < len(self.slots):
+            slot = self.slots[slot_index]
+            if slot.assigned_to == user_id:
+                slot.completed = True
+        return self.assign(user_id)
+
+    def release_user(self, user_id: str):
+        """Le user se deconnecte : libere son slot pour reassignation."""
+        if user_id in self._user_order:
+            self._user_order.remove(user_id)
+        for slot in self.slots:
+            if slot.assigned_to == user_id and not slot.completed:
+                slot.assigned_to = None
+
+    def reset(self):
+        """Vide tout l'etat (slots + ordre des users). Garde la config."""
+        self.slots.clear()
+        self._user_order.clear()
+
+    # ── Retro-compat (alias des anciens noms utilises ailleurs) ────────────
+
+    def release_slot(self, user_id: str):
+        self.release_user(user_id)
