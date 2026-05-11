@@ -1,159 +1,122 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <title>STC - Console d'Administration</title>
-    <style>
-        :root {
-            --primary: #1a73e8;
-            --success: #34a853;
-            --warning: #fbbc04;
-            --danger: #ea4335;
-            --dark: #202124;
-        }
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f0f2f5; margin: 20px; color: #3c4043; }
-        .dashboard { display: grid; grid-template-columns: 350px 1fr; gap: 20px; max-width: 1400px; margin: auto; }
-        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 20px; }
-        h2 { font-size: 1.1rem; color: var(--primary); margin-top: 0; border-bottom: 2px solid #f1f3f4; padding-bottom: 12px; display: flex; align-items: center; gap: 10px; }
-        
-        /* Formulaire */
-        .control-group { margin-bottom: 15px; }
-        label { display: block; font-weight: 600; margin-bottom: 8px; font-size: 0.85rem; color: #5f6368; }
-        input { width: 100%; padding: 10px; border: 1.5px solid #dadce0; border-radius: 8px; box-sizing: border-box; font-size: 1rem; }
-        
-        /* Boutons */
-        .btn-stack { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
-        button { width: 100%; padding: 14px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 0.9rem; transition: filter 0.2s; }
-        button:hover { filter: brightness(0.9); }
-        .btn-start { background: var(--success); color: white; }
-        .btn-pause { background: var(--warning); color: white; }
-        .btn-stop { background: var(--danger); color: white; }
-        
-        /* Liste Users */
-        .user-item { 
-            display: flex; justify-content: space-between; align-items: center;
-            padding: 12px; background: #f8f9fa; border-radius: 8px; margin-bottom: 8px; 
-        }
-        .status-indicator { height: 10px; width: 10px; background: var(--success); border-radius: 50%; }
-        .pool-tag { background: var(--primary); color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; }
-
-        /* Console */
-        #log { 
-            background: var(--dark); color: #81c995; font-family: 'Consolas', monospace;
-            padding: 20px; height: 500px; overflow-y: auto; border-radius: 10px; line-height: 1.5; font-size: 0.9rem;
-        }
-        .log-time { color: #5f6368; margin-right: 10px; }
-        .log-important { color: var(--warning); font-weight: bold; }
-    </style>
+<meta charset="UTF-8">
+<title>STC - Admin</title>
+<style>
+  body { font-family: monospace; margin: 20px; max-width: 1000px; }
+  fieldset { margin-bottom: 15px; }
+  input { font: inherit; padding: 4px; width: 80px; }
+  button { font: inherit; padding: 6px 12px; margin-right: 6px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; }
+  #log { background: #111; color: #0f0; padding: 10px; height: 350px; overflow-y: auto; font-size: 0.9rem; }
+  .files a { display: block; }
+</style>
 </head>
 <body>
 
-<div class="dashboard">
-    <div class="side">
-        <div class="card">
-            <h2>⚙️ Paramètres du Relais</h2>
-            <div class="control-group">
-                <label>Durée du Slot (secondes)</label>
-                <input type="number" id="slot" value="30">
-            </div>
-            <div class="control-group">
-                <label>Chevauchement / Overlap (secondes)</label>
-                <input type="number" id="overlap" value="5">
-            </div>
-            <div class="control-group">
-                <label>Nombre de Pools (Groupes)</label>
-                <input type="number" id="pools" value="1">
-            </div>
-            
-            <div class="btn-stack">
-                <button class="btn-start" onclick="send('admin_start')">DÉMARRER LA SESSION</button>
-                <button class="btn-pause" id="pause-btn" onclick="send('admin_pause')">PAUSE / REPRENDRE</button>
-                <button class="btn-stop" onclick="send('admin_stop')">ARRÊTER LA SESSION</button>
-            </div>
-        </div>
+<h2>STC - Console Admin</h2>
 
-        <div class="card">
-            <h2>👥 Utilisateurs en Ligne</h2>
-            <div id="user-list">Aucun participant connecté.</div>
-        </div>
-    </div>
+<fieldset>
+  <legend>Paramètres</legend>
+  <label>Slot (s) : <input type="number" id="slot" value="30"></label>
+  <label>Overlap (s) : <input type="number" id="overlap" value="5"></label>
+  <label>Pools : <input type="number" id="pools" value="1"></label>
+  <div style="margin-top:10px">
+    <button onclick="send('admin_start')">Démarrer</button>
+    <button onclick="send('admin_pause')">Pause / Reprendre</button>
+    <button onclick="send('admin_stop')">Arrêter</button>
+  </div>
+  <div style="margin-top:10px">État : <strong id="state-display">inactif</strong></div>
+</fieldset>
 
-    <div class="card">
-        <h2>🖥️ Flux de Production en Direct</h2>
-        <div id="log">En attente de connexion au serveur...</div>
-    </div>
-</div>
+<fieldset>
+  <legend>Utilisateurs connectés</legend>
+  <table id="user-table">
+    <thead><tr><th>Nom</th><th>Pool</th><th>Ordre</th></tr></thead>
+    <tbody><tr><td colspan="3">Aucun</td></tr></tbody>
+  </table>
+</fieldset>
+
+<fieldset>
+  <legend>Flux temps réel</legend>
+  <div id="log">En attente...</div>
+</fieldset>
+
+<fieldset>
+  <legend>Fichiers exportés</legend>
+  <div class="files" id="files">(rien encore)</div>
+</fieldset>
 
 <script>
-    const ws = new WebSocket(`ws://${location.host}/ws`);
-    const logDiv = document.getElementById('log');
-    const userListDiv = document.getElementById('user-list');
-    const pauseBtn = document.getElementById('pause-btn');
+const ws = new WebSocket(`ws://${location.host}/ws`);
+const logDiv = document.getElementById('log');
+const userTbody = document.querySelector('#user-table tbody');
+const stateDisplay = document.getElementById('state-display');
+const filesDiv = document.getElementById('files');
 
-    ws.onopen = () => {
-        addLog("✅ Système connecté. Console d'administration prête.");
-        // Identification de l'admin
-        ws.send(JSON.stringify({ type: "join", username: "ADMIN_MASTER", user_id: "admin_master" }));
-    };
+ws.onopen = () => {
+  addLog("Connecté.");
+  ws.send(JSON.stringify({ type: "join", username: "ADMIN", user_id: "admin_master" }));
+};
 
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        
-        // Mise à jour de la liste des participants
-        if (data.type === "user_update") {
-            const users = data.users.filter(u => u.id !== 'admin_master');
-            userListDiv.innerHTML = users.length > 0 ? "" : "Aucun participant.";
-            users.forEach(u => {
-                userListDiv.innerHTML += `
-                    <div class="user-item">
-                        <span><span class="status-indicator"></span> ${u.name}</span>
-                        <span class="pool-tag">Pool ${u.pool}</span>
-                    </div>
-                `;
-            });
-        }
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
 
-        // Gestion des retours d'état
-        if (data.type === "sync_update") {
-            const state = data.state;
-            if (state.active) {
-                pauseBtn.innerText = state.paused ? "▶️ REPRENDRE" : "⏸️ PAUSE";
-                pauseBtn.style.background = state.paused ? "#34a853" : "#fbbc04";
-                if(state.paused) addLog("<span class='log-important'>⏸️ SESSION EN PAUSE</span>");
-            }
-        }
-
-        // Affichage des sous-titres en temps réel
-        if (data.type === "new_text") {
-            addLog(`[P${data.pool}] <strong>${data.user}</strong>: ${data.text}`);
-        }
-
-        if (data.type === "session_ended") {
-            addLog("<span class='log-important'>🛑 SESSION TERMINÉE. FICHIER DISPONIBLE DANS /DATA.</span>");
-            pauseBtn.innerText = "PAUSE / REPRENDRE";
-            pauseBtn.style.background = "#fbbc04";
-        }
-    };
-
-    function send(type) {
-        const payload = {
-            type: type,
-            slot: document.getElementById('slot').value,
-            overlap: document.getElementById('overlap').value,
-            pools: document.getElementById('pools').value
-        };
-        ws.send(JSON.stringify(payload));
-        
-        if(type === 'admin_start') addLog("🚀 Commande START envoyée.");
-        if(type === 'admin_stop') addLog("🛑 Commande STOP envoyée.");
+  if (data.type === "user_update") {
+    const users = data.users.filter(u => u.id !== 'admin_master');
+    if (!users.length) {
+      userTbody.innerHTML = '<tr><td colspan="3">Aucun</td></tr>';
+    } else {
+      userTbody.innerHTML = users.map(u =>
+        `<tr><td>${u.name}</td><td>${u.pool}</td><td>${u.order}</td></tr>`
+      ).join("");
     }
+  }
 
-    function addLog(msg) {
-        const time = new Date().toLocaleTimeString();
-        logDiv.innerHTML += `<div><span class="log-time">[${time}]</span> ${msg}</div>`;
-        logDiv.scrollTop = logDiv.scrollHeight;
+  if (data.type === "sync_update" || data.type === "session_started" || data.type === "session_paused") {
+    const s = data.state;
+    if (!s.active) stateDisplay.innerText = "inactif";
+    else if (s.paused) stateDisplay.innerText = "EN PAUSE";
+    else stateDisplay.innerText = `actif - slot ${s.slot_index} - ${s.time_left}s`;
+  }
+
+  if (data.type === "new_text") {
+    addLog(`[P${data.pool} | slot ${data.slot_index}] ${data.user} : ${escapeHtml(data.text)}`);
+  }
+
+  if (data.type === "session_ended") {
+    addLog("SESSION TERMINÉE.");
+    stateDisplay.innerText = "terminée";
+    if (data.files && data.files.length) {
+      filesDiv.innerHTML = data.files.map(f =>
+        `<a href="/download/${encodeURIComponent(f)}" target="_blank">${f}</a>`
+      ).join("");
     }
+  }
+};
+
+function send(type) {
+  const payload = {
+    type,
+    slot: document.getElementById('slot').value,
+    overlap: document.getElementById('overlap').value,
+    pools: document.getElementById('pools').value,
+  };
+  ws.send(JSON.stringify(payload));
+  addLog(`> ${type}`);
+}
+
+function addLog(msg) {
+  const t = new Date().toLocaleTimeString();
+  logDiv.innerHTML += `[${t}] ${msg}<br>`;
+  logDiv.scrollTop = logDiv.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 </script>
-
 </body>
 </html>
