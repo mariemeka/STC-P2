@@ -4,14 +4,21 @@
 <meta charset="UTF-8">
 <title>STC - Admin</title>
 <style>
-  body { font-family: monospace; margin: 20px; max-width: 1000px; }
+  body { font-family: monospace; margin: 20px; max-width: 1100px; }
   fieldset { margin-bottom: 15px; }
   input { font: inherit; padding: 4px; width: 80px; }
   button { font: inherit; padding: 6px 12px; margin-right: 6px; }
   table { border-collapse: collapse; width: 100%; margin-top: 8px; }
-  th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; }
-  #log { background: #111; color: #0f0; padding: 10px; height: 350px; overflow-y: auto; font-size: 0.9rem; }
-  .files a { display: block; }
+  th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; vertical-align: middle; }
+  select, .reassign-btn { font: inherit; padding: 2px 6px; }
+  #log { background: #111; color: #0f0; padding: 10px; height: 300px; overflow-y: auto; font-size: 0.9rem; }
+  .files a { display: block; padding: 2px 0; }
+  .state-running { color: #2c7a2c; font-weight: bold; }
+  .state-countdown { color: #d63f00; font-weight: bold; }
+  .state-paused { color: #b87000; font-weight: bold; }
+  .state-stopped { color: #888; }
+  .grid { display: grid; grid-template-columns: 100px 80px; gap: 6px; align-items: center; max-width: 220px; }
+  .help { color: #666; font-size: 0.85em; }
 </style>
 </head>
 <body>
@@ -20,23 +27,28 @@
 
 <fieldset>
   <legend>Paramètres</legend>
-  <label>Slot (s) : <input type="number" id="slot" value="30"></label>
-  <label>Overlap (s) : <input type="number" id="overlap" value="5"></label>
-  <label>Pools : <input type="number" id="pools" value="1"></label>
-  <div style="margin-top:10px">
+  <div class="grid">
+    <label>Slot (s) :</label><input type="number" id="slot" value="30" min="5">
+    <label>Overlap (s) :</label><input type="number" id="overlap" value="5" min="0">
+    <label>Pools :</label><input type="number" id="pools" value="1" min="1">
+    <label>Countdown (s) :</label><input type="number" id="countdown" value="3" min="0">
+  </div>
+  <div class="help">La session tourne tant que vous ne cliquez pas sur Arrêter (live). Countdown 0 = démarrage immédiat.</div>
+  <div style="margin-top:12px">
     <button onclick="send('admin_start')">Démarrer</button>
     <button onclick="send('admin_pause')">Pause / Reprendre</button>
     <button onclick="send('admin_stop')">Arrêter</button>
   </div>
-  <div style="margin-top:10px">État : <strong id="state-display">inactif</strong></div>
+  <div style="margin-top:10px">État : <span id="state-display" class="state-stopped">inactif</span></div>
 </fieldset>
 
 <fieldset>
   <legend>Utilisateurs connectés</legend>
   <table id="user-table">
-    <thead><tr><th>Nom</th><th>Pool</th><th>Ordre</th></tr></thead>
-    <tbody><tr><td colspan="3">Aucun</td></tr></tbody>
+    <thead><tr><th>Nom</th><th>Pool</th><th>Ordre</th><th>Réassigner</th></tr></thead>
+    <tbody><tr><td colspan="4">Aucun</td></tr></tbody>
   </table>
+  <div class="help">Réassigne un user pendant ou avant la session. L'ordre est compacté automatiquement.</div>
 </fieldset>
 
 <fieldset>
@@ -55,6 +67,8 @@ const logDiv = document.getElementById('log');
 const userTbody = document.querySelector('#user-table tbody');
 const stateDisplay = document.getElementById('state-display');
 const filesDiv = document.getElementById('files');
+let currentUsers = [];
+let numPools = 1;
 
 ws.onopen = () => {
   addLog("Connecté.");
@@ -65,30 +79,43 @@ ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
 
   if (data.type === "user_update") {
-    const users = data.users.filter(u => u.id !== 'admin_master');
-    if (!users.length) {
-      userTbody.innerHTML = '<tr><td colspan="3">Aucun</td></tr>';
-    } else {
-      userTbody.innerHTML = users.map(u =>
-        `<tr><td>${u.name}</td><td>${u.pool}</td><td>${u.order}</td></tr>`
-      ).join("");
-    }
+    currentUsers = data.users.filter(u => u.id !== 'admin_master');
+    renderUsers();
   }
 
   if (data.type === "sync_update" || data.type === "session_started" || data.type === "session_paused") {
     const s = data.state;
-    if (!s.active) stateDisplay.innerText = "inactif";
-    else if (s.paused) stateDisplay.innerText = "EN PAUSE";
-    else stateDisplay.innerText = `actif - slot ${s.slot_index} - ${s.time_left}s`;
+    numPools = (s.config && s.config.num_pools) || numPools;
+    if (!s.active) {
+      stateDisplay.innerText = "inactif";
+      stateDisplay.className = "state-stopped";
+    } else if (s.countdown && s.countdown > 0) {
+      stateDisplay.innerText = `COUNTDOWN ${s.countdown}`;
+      stateDisplay.className = "state-countdown";
+    } else if (s.paused) {
+      stateDisplay.innerText = "EN PAUSE";
+      stateDisplay.className = "state-paused";
+    } else {
+      stateDisplay.innerText = `actif - slot ${s.slot_index} - ${s.time_left}s restantes`;
+      stateDisplay.className = "state-running";
+    }
+    renderUsers();
   }
 
   if (data.type === "new_text") {
     addLog(`[P${data.pool} | slot ${data.slot_index}] ${data.user} : ${escapeHtml(data.text)}`);
   }
 
+  if (data.type === "live_typing") {
+    // Affichage léger dans le log (en gris)
+    // Limité pour ne pas spammer
+    // On l'ignore dans l'admin pour rester lisible
+  }
+
   if (data.type === "session_ended") {
     addLog("SESSION TERMINÉE.");
     stateDisplay.innerText = "terminée";
+    stateDisplay.className = "state-stopped";
     if (data.files && data.files.length) {
       filesDiv.innerHTML = data.files.map(f =>
         `<a href="/download/${encodeURIComponent(f)}" target="_blank">${f}</a>`
@@ -97,12 +124,43 @@ ws.onmessage = (event) => {
   }
 };
 
+function renderUsers() {
+  if (!currentUsers.length) {
+    userTbody.innerHTML = '<tr><td colspan="4">Aucun</td></tr>';
+    return;
+  }
+  userTbody.innerHTML = currentUsers.map(u => {
+    const poolOpts = Array.from({length: numPools}, (_, i) =>
+      `<option value="${i+1}" ${u.pool === i+1 ? 'selected' : ''}>Pool ${i+1}</option>`).join('');
+    return `
+      <tr>
+        <td>${escapeHtml(u.name)}</td>
+        <td>${u.pool}</td>
+        <td>${u.order}</td>
+        <td>
+          <select id="pool-${u.id}">${poolOpts}</select>
+          <input type="number" id="order-${u.id}" value="${u.order}" min="0" style="width:50px">
+          <button class="reassign-btn" onclick="reassign('${u.id}')">Appliquer</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function reassign(uid) {
+  const pool = parseInt(document.getElementById(`pool-${uid}`).value);
+  const order = parseInt(document.getElementById(`order-${uid}`).value);
+  ws.send(JSON.stringify({ type: "admin_assign", user_id: uid, pool_id: pool, order: order }));
+  addLog(`> admin_assign ${uid} → pool ${pool} ordre ${order}`);
+}
+
 function send(type) {
   const payload = {
     type,
     slot: document.getElementById('slot').value,
     overlap: document.getElementById('overlap').value,
     pools: document.getElementById('pools').value,
+    countdown: document.getElementById('countdown').value,
   };
   ws.send(JSON.stringify(payload));
   addLog(`> ${type}`);
@@ -115,7 +173,7 @@ function addLog(msg) {
 }
 
 function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 </script>
 </body>

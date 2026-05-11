@@ -19,9 +19,25 @@
   @keyframes blink { 50% { opacity: 0.3; } }
   .flash { animation: flash 0.6s ease-out; }
   @keyframes flash { 0% { background: #b6e3b8; } 100% { background: transparent; } }
+
+  /* Overlay countdown */
+  #countdown-overlay {
+    display: none;
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85);
+    z-index: 9999; align-items: center; justify-content: center;
+    flex-direction: column; color: white;
+  }
+  #countdown-overlay.visible { display: flex; }
+  #countdown-number { font-size: 12rem; font-weight: bold; color: #ff6b6b; }
+  #countdown-label { font-size: 1.5rem; margin-top: 20px; }
 </style>
 </head>
 <body>
+
+<div id="countdown-overlay">
+  <div id="countdown-number">3</div>
+  <div id="countdown-label">La session démarre...</div>
+</div>
 
 <div id="login">
   <h2>STC - Sous-titreur</h2>
@@ -45,17 +61,17 @@
   </div>
   <div class="row">
     <button id="send-btn" onclick="sendCaption()" disabled>Envoyer (Entrée)</button>
-    <span style="margin-left:15px">Caractères envoyés : <span id="char-count">0</span></span>
-    <span style="margin-left:15px">Lignes envoyées : <span id="line-count">0</span></span>
+    <span style="margin-left:15px">Caractères : <span id="char-count">0</span></span>
+    <span style="margin-left:15px">Lignes : <span id="line-count">0</span></span>
   </div>
   <div class="row" style="font-size:0.85rem;color:#666">
-    Auto-envoi en fin de slot si Entrée non pressée. Entrée = envoyer, Shift+Entrée = saut de ligne.
+    Tu vois ce que tu tapes en direct dans le viewer (pas besoin d'Entrée).
+    Entrée = valider et passer à la ligne suivante. Auto-envoi en fin de slot.
   </div>
 </div>
 
 <script>
 let ws;
-// sessionStorage : isolé par onglet → plusieurs sous-titreurs sur la même machine
 let userId = sessionStorage.getItem('stc_user_id');
 let username = '';
 let totalChars = 0;
@@ -65,10 +81,12 @@ let isMyTurn = false;
 let prevIsMyTurn = false;
 let active = false;
 let paused = false;
-let endsAt = 0;            // timestamp (ms) où mon tour se termine
+let countdownActive = false;
+let endsAt = 0;
 let lastAutoFlushSlot = -1;
 let countdownTimer = null;
 let audioCtx = null;
+let lastSentLiveText = "";
 
 if (localStorage.getItem('stc_username')) {
   document.getElementById('username-input').value = localStorage.getItem('stc_username');
@@ -85,7 +103,7 @@ function beep(freq, duration) {
     gain.gain.value = 0.15;
     osc.start();
     setTimeout(() => osc.stop(), duration);
-  } catch (e) { /* audio bloqué */ }
+  } catch (e) {}
 }
 
 function connect() {
@@ -121,6 +139,7 @@ function connect() {
       isMyTurn = false;
       flushIfNeeded();
       stopCountdown();
+      hideCountdownOverlay();
       updateUI();
       document.getElementById('status-display').innerText = "Session terminée";
       if (msg.files && msg.files.length) {
@@ -132,6 +151,7 @@ function connect() {
   ws.onclose = () => {
     document.getElementById('status-display').innerText = "Déconnecté";
     stopCountdown();
+    hideCountdownOverlay();
   };
 }
 
@@ -142,15 +162,26 @@ function applyState(state) {
   isMyTurn = !!state.is_my_turn;
   currentSlot = (state.my_slot_index != null) ? state.my_slot_index : (state.slot_index || 0);
   document.getElementById('slot-display').innerText = currentSlot;
-
-  // Resynchroniser l'horloge locale sur l'horloge serveur
   endsAt = Date.now() + (state.time_left ?? 0) * 1000;
 
-  // Transition : tour fini → flush automatique
+  // Countdown phase
+  const cd = state.countdown || 0;
+  if (active && cd > 0) {
+    countdownActive = true;
+    showCountdownOverlay(cd);
+    updateUI();
+    return;
+  } else if (countdownActive) {
+    // Sortie du countdown
+    countdownActive = false;
+    hideCountdownOverlay();
+  }
+
+  // Transition tour fini → auto-flush
   if (prevIsMyTurn && !isMyTurn) {
     flushIfNeeded();
   }
-  // Transition : tour commence → alerte
+  // Transition tour commence → alerte
   if (!prevIsMyTurn && isMyTurn && active && !paused) {
     document.body.classList.remove('flash'); void document.body.offsetWidth;
     document.body.classList.add('flash');
@@ -160,6 +191,15 @@ function applyState(state) {
 
   updateUI();
   startCountdown();
+}
+
+function showCountdownOverlay(seconds) {
+  document.getElementById('countdown-number').innerText = seconds;
+  document.getElementById('countdown-overlay').classList.add('visible');
+}
+
+function hideCountdownOverlay() {
+  document.getElementById('countdown-overlay').classList.remove('visible');
 }
 
 function startCountdown() {
@@ -172,10 +212,7 @@ function startCountdown() {
     if (isMyTurn && remaining < 3) timerEl.classList.add('warn');
     else timerEl.classList.remove('warn');
 
-    // Auto-flush 0.3s avant la fin pour passer la validation serveur
-    if (isMyTurn && remaining < 0.4) {
-      flushIfNeeded();
-    }
+    if (isMyTurn && remaining < 0.4) flushIfNeeded();
   }, 100);
 }
 
@@ -194,6 +231,11 @@ function updateUI() {
     status.innerText = "Inactif"; status.className = "badge turn-off";
     return;
   }
+  if (countdownActive) {
+    area.disabled = true; btn.disabled = true;
+    status.innerText = "Démarrage..."; status.className = "badge turn-off";
+    return;
+  }
   if (paused) {
     area.disabled = true; btn.disabled = true;
     status.innerText = "En pause"; status.className = "badge turn-off";
@@ -201,7 +243,7 @@ function updateUI() {
   }
   if (isMyTurn) {
     area.disabled = false; btn.disabled = false;
-    area.placeholder = "À vous ! Entrée pour envoyer.";
+    area.placeholder = "À vous ! Entrée pour valider une phrase.";
     status.innerText = "C'EST VOTRE TOUR"; status.className = "badge turn-on";
     area.focus();
   } else {
@@ -221,10 +263,10 @@ function sendCaption() {
   document.getElementById('char-count').innerText = totalChars;
   document.getElementById('line-count').innerText = totalLines;
   area.value = "";
+  lastSentLiveText = "";
 }
 
 function flushIfNeeded() {
-  // Auto-envoi : si textarea non vide et qu'on n'a pas déjà flushé ce slot
   if (lastAutoFlushSlot === currentSlot) return;
   const area = document.getElementById('text-input');
   const val = area.value.trim();
@@ -237,6 +279,7 @@ function flushIfNeeded() {
   document.getElementById('line-count').innerText = totalLines;
   area.value = "";
   lastAutoFlushSlot = currentSlot;
+  lastSentLiveText = "";
 }
 
 document.getElementById('text-input').addEventListener('keydown', (e) => {
@@ -246,7 +289,21 @@ document.getElementById('text-input').addEventListener('keydown', (e) => {
   }
 });
 
-// Reset du flag d'auto-flush quand on change de slot
+// Live typing : envoi débounce à chaque modif
+let typingTimer = null;
+document.getElementById('text-input').addEventListener('input', (e) => {
+  if (!isMyTurn || !active || paused || countdownActive) return;
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(() => {
+    const val = e.target.value;
+    if (val === lastSentLiveText) return;
+    lastSentLiveText = val;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "live_typing", text: val }));
+    }
+  }, 150);
+});
+
 setInterval(() => {
   if (lastAutoFlushSlot !== -1 && lastAutoFlushSlot !== currentSlot) {
     lastAutoFlushSlot = -1;

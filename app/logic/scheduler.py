@@ -7,6 +7,7 @@ class SessionConfig(BaseModel):
     slot_duration: int = 30
     overlap_duration: int = 5
     num_pools: int = 1
+    countdown: int = 3       # secondes avant le slot 0
     start_time: Optional[float] = None
     paused_at: Optional[float] = None
     total_paused_time: float = 0.0
@@ -30,10 +31,11 @@ class Scheduler:
         self.users: Dict[str, User] = {}
 
     # ── Config ────────────────────────────────────────────────────────────
-    def set_config(self, slot_dur: int, overlap: int, pools: int):
+    def set_config(self, slot_dur: int, overlap: int, pools: int, countdown: int = 3):
         self.config.slot_duration = max(1, slot_dur)
         self.config.overlap_duration = max(0, min(overlap, self.config.slot_duration - 1))
         self.config.num_pools = max(1, pools)
+        self.config.countdown = max(0, countdown)
 
     # ── Users ─────────────────────────────────────────────────────────────
     def _subtitlers(self):
@@ -58,7 +60,6 @@ class Scheduler:
         return user
 
     def remove_user(self, user_id: str):
-        """Retire un user et compacte order_in_pool dans son pool."""
         user = self.users.pop(user_id, None)
         if not user or user.user_id == ADMIN_ID:
             return
@@ -67,6 +68,34 @@ class Scheduler:
             key=lambda u: u.order_in_pool,
         )
         for i, u in enumerate(pool_users):
+            u.order_in_pool = i
+
+    def assign_user(self, user_id: str, new_pool: int, new_order: int):
+        """Réaffecte un user à un pool/ordre donné, en réindexant les autres."""
+        user = self.users.get(user_id)
+        if not user or user.user_id == ADMIN_ID:
+            return
+        old_pool = user.pool_id
+        new_pool = max(1, min(new_pool, self.config.num_pools))
+
+        # Réindexer l'ancien pool (l'user le quitte)
+        if old_pool != new_pool:
+            old_users = sorted(
+                [u for u in self._subtitlers() if u.pool_id == old_pool and u.user_id != user_id],
+                key=lambda u: u.order_in_pool,
+            )
+            for i, u in enumerate(old_users):
+                u.order_in_pool = i
+
+        # Insérer dans le nouveau pool à la position demandée
+        new_pool_users = sorted(
+            [u for u in self._subtitlers() if u.pool_id == new_pool and u.user_id != user_id],
+            key=lambda u: u.order_in_pool,
+        )
+        new_order = max(0, min(new_order, len(new_pool_users)))
+        user.pool_id = new_pool
+        new_pool_users.insert(new_order, user)
+        for i, u in enumerate(new_pool_users):
             u.order_in_pool = i
 
     # ── Pause ─────────────────────────────────────────────────────────────
@@ -93,11 +122,26 @@ class Scheduler:
                 "is_my_turn": False,
                 "slot_index": 0,
                 "my_slot_index": 0,
+                "countdown": 0,
             }
 
         now = self.config.paused_at if self.config.is_paused else time.time()
-        elapsed = max(0.0, now - self.config.start_time - self.config.total_paused_time)
+        elapsed_raw = now - self.config.start_time - self.config.total_paused_time
 
+        # Phase de countdown : start_time est dans le futur
+        if elapsed_raw < 0:
+            return {
+                "active": True,
+                "paused": False,
+                "time_left": 0,
+                "is_my_turn": False,
+                "slot_index": 0,
+                "my_slot_index": 0,
+                "countdown": max(1, int(-elapsed_raw) + 1),
+                "config": self.config.model_dump(),
+            }
+
+        elapsed = elapsed_raw
         slot_dur = self.config.slot_duration
         overlap = self.config.overlap_duration
         cycle_time = max(1, slot_dur - overlap)
@@ -136,5 +180,7 @@ class Scheduler:
             "time_left": my_time_left if user_id else time_left,
             "is_my_turn": is_my_turn,
             "my_slot_index": my_slot_index,
+            "countdown": 0,
+            "elapsed": round(elapsed, 1),
             "config": self.config.model_dump(),
         }
