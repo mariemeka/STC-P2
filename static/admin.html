@@ -60,6 +60,9 @@
 
 <fieldset>
   <legend>Flux temps réel</legend>
+  <div id="live-area" style="min-height:1.6rem;padding:4px 8px;background:#f0f4ff;border:1px solid #c8d4f0;margin-bottom:6px;font-size:0.9rem;color:#555">
+    <em>Aucune frappe en cours.</em>
+  </div>
   <div id="log">En attente...</div>
 </fieldset>
 
@@ -69,13 +72,16 @@
 </fieldset>
 
 <script>
-const ws = new WebSocket(`ws://${location.host}/ws`);
+const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+const ws = new WebSocket(`${proto}://${location.host}/ws`);
 const logDiv = document.getElementById('log');
 const userTbody = document.querySelector('#user-table tbody');
 const stateDisplay = document.getElementById('state-display');
 const filesDiv = document.getElementById('files');
 let currentUsers = [];
 let numPools = 1;
+let liveTypers = {};  // { username: { pool, text } }
+const liveArea = document.getElementById('live-area');
 
 ws.onopen = () => {
   addLog("Connecté.");
@@ -84,6 +90,27 @@ ws.onopen = () => {
 
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
+
+  if (data.type === "welcome") {
+    const s = data.state;
+    if (s) {
+      numPools = (s.config && s.config.num_pools) || numPools;
+      if (!s.active) {
+        stateDisplay.innerText = "inactif";
+        stateDisplay.className = "state-stopped";
+      } else if (s.countdown && s.countdown > 0) {
+        stateDisplay.innerText = `COUNTDOWN ${s.countdown}`;
+        stateDisplay.className = "state-countdown";
+      } else if (s.paused) {
+        stateDisplay.innerText = "EN PAUSE";
+        stateDisplay.className = "state-paused";
+      } else {
+        stateDisplay.innerText = `actif - slot ${s.slot_index} - ${s.time_left}s restantes`;
+        stateDisplay.className = "state-running";
+      }
+      renderUsers();
+    }
+  }
 
   if (data.type === "user_update") {
     currentUsers = data.users.filter(u => u.id !== 'admin_master');
@@ -114,15 +141,20 @@ ws.onmessage = (event) => {
   }
 
   if (data.type === "live_typing") {
-    // Affichage léger dans le log (en gris)
-    // Limité pour ne pas spammer
-    // On l'ignore dans l'admin pour rester lisible
+    if (data.text && data.text.trim()) {
+      liveTypers[data.user] = { pool: data.pool, text: data.text.trim() };
+    } else {
+      delete liveTypers[data.user];
+    }
+    renderLiveTyping();
   }
 
   if (data.type === "session_ended") {
     addLog("SESSION TERMINÉE.");
     stateDisplay.innerText = "terminée";
     stateDisplay.className = "state-stopped";
+    liveTypers = {};
+    renderLiveTyping();
     if (data.files && data.files.length) {
       filesDiv.innerHTML = data.files.map(f =>
         `<a href="/download/${encodeURIComponent(f)}" target="_blank">${f}</a>`
@@ -130,6 +162,17 @@ ws.onmessage = (event) => {
     }
   }
 };
+
+function renderLiveTyping() {
+  const entries = Object.entries(liveTypers);
+  if (!entries.length) {
+    liveArea.innerHTML = '<em>Aucune frappe en cours.</em>';
+    return;
+  }
+  liveArea.innerHTML = entries.map(([user, d]) =>
+    `<span style="color:#1a73e8;font-weight:bold">${escapeHtml(user)}</span> [P${d.pool}] : <span style="color:#333">${escapeHtml(d.text)}</span>▌`
+  ).join('<br>');
+}
 
 function renderUsers() {
   if (!currentUsers.length) {

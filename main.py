@@ -208,27 +208,35 @@ async def start_sync_loop():
     asyncio.create_task(sync_loop())
 
 async def sync_loop():
+    tick = 0
     while True:
         await asyncio.sleep(0.5)
-        if not scheduler.config.is_active:
-            continue
+        tick += 1
 
-        for uid, ws in list(connections.items()):
-            try:
-                await ws.send_json({
-                    "type": "sync_update",
-                    "state": scheduler.get_current_state(uid)
-                })
-            except Exception:
-                pass
-        for vid, ws in list(viewers.items()):
-            try:
-                await ws.send_json({
-                    "type": "sync_update",
-                    "state": scheduler.get_current_state()
-                })
-            except Exception:
-                pass
+        if scheduler.config.is_active:
+            for uid, ws in list(connections.items()):
+                try:
+                    await ws.send_json({
+                        "type": "sync_update",
+                        "state": scheduler.get_current_state(uid)
+                    })
+                except Exception:
+                    pass
+            for vid, ws in list(viewers.items()):
+                try:
+                    await ws.send_json({
+                        "type": "sync_update",
+                        "state": scheduler.get_current_state()
+                    })
+                except Exception:
+                    pass
+        elif tick % 60 == 0:
+            # Keepalive toutes les 30 s quand inactif (Fly.io ferme les WS idle à 60 s)
+            for ws in list(connections.values()) + list(viewers.values()):
+                try:
+                    await ws.send_json({"type": "ping"})
+                except Exception:
+                    pass
 
 async def stop_and_export():
     if not scheduler.config.is_active:
