@@ -53,6 +53,12 @@ async def download(filename: str):
         return HTMLResponse("Not found", status_code=404)
     return FileResponse(path, filename=filename)
 
+@app.get("/video")
+async def get_video():
+    """Page vidéo synchronisée pour tous les sous-titreurs"""
+    with open("static/video.html", encoding="utf-8") as f:
+        return HTMLResponse(f.read())
+    
 # ─── WEBSOCKET ────────────────────────────────────────────────────────────
 
 @app.websocket("/ws")
@@ -101,6 +107,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     overlap=int(msg.get("overlap", 5)),
                     pools=int(msg.get("pools", 1)),
                     countdown=int(msg.get("countdown", 3)),
+                    listen=int(msg.get("listen", 8)),
                 )
                 # Countdown : start_time est dans le futur
                 scheduler.config.start_time = time.time() + scheduler.config.countdown

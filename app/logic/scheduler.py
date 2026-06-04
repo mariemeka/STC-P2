@@ -4,10 +4,11 @@ from pydantic import BaseModel
 
 
 class SessionConfig(BaseModel):
-    slot_duration: int = 30
+    slot_duration: int = 20
     overlap_duration: int = 5
+    listen_duration: int = 8   # ← nouveau : durée d'écoute avant de taper
     num_pools: int = 1
-    countdown: int = 3       # secondes avant le slot 0
+    countdown: int = 3
     start_time: Optional[float] = None
     paused_at: Optional[float] = None
     total_paused_time: float = 0.0
@@ -31,9 +32,10 @@ class Scheduler:
         self.users: Dict[str, User] = {}
 
     # ── Config ────────────────────────────────────────────────────────────
-    def set_config(self, slot_dur: int, overlap: int, pools: int, countdown: int = 3):
+    def set_config(self, slot_dur: int, overlap: int, pools: int, countdown: int = 3, listen: int = 8):
         self.config.slot_duration = max(1, slot_dur)
         self.config.overlap_duration = max(0, min(overlap, self.config.slot_duration - 1))
+        self.config.listen_duration = max(0, listen)
         self.config.num_pools = max(1, pools)
         self.config.countdown = max(0, countdown)
 
@@ -128,7 +130,6 @@ class Scheduler:
         now = self.config.paused_at if self.config.is_paused else time.time()
         elapsed_raw = now - self.config.start_time - self.config.total_paused_time
 
-        # Phase de countdown : start_time est dans le futur
         if elapsed_raw < 0:
             return {
                 "active": True,

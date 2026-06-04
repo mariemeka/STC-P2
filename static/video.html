@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>STC - Sous-titreur</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 900px; 
+            margin: 30px auto; 
+            padding: 0 20px;
+            background: #f5f5f5;
+        }
+        h2 { color: #1F4E79; }
+
+        /* Vidéo */
+        video { 
+            width: 100%; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+
+        /* Infos slot */
+        .slot-info {
+            background: #2E75B6; color: white;
+            padding: 10px 16px; border-radius: 8px;
+            margin: 16px 0; font-size: 14px;
+            display: flex; justify-content: space-between;
+        }
+        .slot-info span { font-weight: bold; }
+
+        /* Timer */
+        .timer {
+            font-size: 28px; font-weight: bold;
+            text-align: center; padding: 10px;
+            border-radius: 8px; margin: 12px 0;
+        }
+        .timer.ok      { background: #D5F5E3; color: #1E8449; }
+        .timer.warning { background: #FEF9E7; color: #B7770D; }
+        .timer.danger  { background: #FADBD8; color: #C0392B; }
+
+        /* Zone de saisie */
+        textarea {
+            width: 100%; height: 100px;
+            font-size: 16px; padding: 12px;
+            border: 2px solid #2E75B6; border-radius: 8px;
+            resize: none; box-sizing: border-box;
+            margin-top: 12px;
+        }
+        textarea:disabled { background: #eee; border-color: #ccc; }
+
+        button {
+            background: #2E75B6; color: white;
+            border: none; padding: 10px 24px;
+            font-size: 15px; border-radius: 8px;
+            cursor: pointer; margin-top: 8px;
+        }
+        button:hover { background: #1F4E79; }
+        button:disabled { background: #aaa; cursor: not-allowed; }
+
+        /* Résultat */
+        .result-box {
+            background: #1F4E79; color: white;
+            padding: 16px; border-radius: 8px;
+            font-size: 18px; min-height: 60px;
+            margin-top: 16px;
+        }
+        .result-label { font-size: 12px; opacity: 0.7; margin-bottom: 6px; }
+    </style>
+</head>
+<body>
+
+    <h2>🎬 STC — Interface Sous-titreur</h2>
+
+    <div class="slot-info">
+        <span>👤 User : <span id="user-id">...</span></span>
+        <span>📋 Slot : <span id="slot-num">...</span></span>
+        <span id="statut">🔄 Connexion...</span>
+    </div>
+
+    <!-- Vidéo -->
+    <video id="player" controls>
+        <source src="/static/media/video.mp4" type="video/mp4">
+        Votre navigateur ne supporte pas la vidéo HTML5.
+    </video>
+
+    <!-- Timer du slot -->
+    <div class="timer ok" id="timer">⏳ En attente du slot...</div>
+
+    <!-- Saisie -->
+    <textarea 
+        id="input" 
+        placeholder="Écoutez la vidéo et tapez ce que vous entendez..."
+        disabled
+    ></textarea>
+    <br>
+    <button id="btn-send" disabled>Envoyer (ou Entrée)</button>
+
+    <!-- Résultat fusionné -->
+    <div class="result-box">
+        <div class="result-label">Résultat fusionné reçu du serveur :</div>
+        <div id="output">En attente...</div>
+    </div>
+
+    <script>
+        const ws = new WebSocket("ws://" + location.host + "/ws");
+        let slotIndex = null;
+        let slotEnd = null;
+        let timerInterval = null;
+
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+
+            if (msg.type === "slot_assigned") {
+                slotIndex = msg.slot_index;
+                slotEnd = msg.end_time;
+
+                document.getElementById("user-id").textContent = msg.user_id;
+                document.getElementById("slot-num").textContent = `Slot ${msg.slot_index}`;
+                document.getElementById("statut").textContent = "✅ Connecté";
+                document.getElementById("input").disabled = false;
+                document.getElementById("btn-send").disabled = false;
+
+                // Démarrer le timer
+                startTimer(msg.end_time);
+            }
+
+            if (msg.type === "fused_caption") {
+                document.getElementById("output").textContent = msg.text;
+            }
+        };
+
+        ws.onclose = () => {
+            document.getElementById("statut").textContent = "❌ Déconnecté";
+            document.getElementById("input").disabled = true;
+            document.getElementById("btn-send").disabled = true;
+        };
+
+        // ── Timer ──────────────────────────────────────────────────────
+        function startTimer(endTimestamp) {
+            if (timerInterval) clearInterval(timerInterval);
+
+            timerInterval = setInterval(() => {
+                const remaining = Math.max(0, endTimestamp - Date.now() / 1000);
+                const timer = document.getElementById("timer");
+
+                const mins = Math.floor(remaining / 60);
+                const secs = Math.floor(remaining % 60).toString().padStart(2, "0");
+                timer.textContent = `⏱ Temps restant : ${mins}:${secs}`;
+
+                if (remaining > 10) {
+                    timer.className = "timer ok";
+                } else if (remaining > 5) {
+                    timer.className = "timer warning";
+                } else {
+                    timer.className = "timer danger";
+                }
+
+                if (remaining === 0) {
+                    clearInterval(timerInterval);
+                    timer.textContent = "⛔ Slot terminé — attendez le prochain";
+                    document.getElementById("input").disabled = true;
+                    document.getElementById("btn-send").disabled = true;
+                }
+            }, 500);
+        }
+
+        // ── Envoi ──────────────────────────────────────────────────────
+        function envoyer() {
+            const text = document.getElementById("input").value.trim();
+            if (!text || slotIndex === null) return;
+
+            ws.send(JSON.stringify({
+                type: "caption",
+                slot_index: slotIndex,
+                text: text
+            }));
+        }
+
+        document.getElementById("btn-send").onclick = envoyer;
+
+        document.getElementById("input").addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                envoyer();
+            }
+        });
+    </script>
+</body>
+</html>

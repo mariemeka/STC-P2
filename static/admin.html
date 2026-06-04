@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -19,6 +20,7 @@
   .state-stopped { color: #888; }
   .grid { display: grid; grid-template-columns: 100px 80px; gap: 6px; align-items: center; max-width: 220px; }
   .help { color: #666; font-size: 0.85em; }
+  #audio-status { font-weight: bold; margin-left: 10px; }
 </style>
 </head>
 <body>
@@ -32,37 +34,55 @@
   <span class="help">S'ouvrent dans un nouvel onglet.</span>
 </fieldset>
 
+<!-- ── AUDIO SOURCE ─────────────────────────────────────────────────────── -->
+<fieldset>
+  <legend>🔊 Source audio</legend>
+  <audio id="audio-player" controls style="width:100%;">
+      <source src="/static/media/video.mp4" type="video/mp4">
+      Votre navigateur ne supporte pas l'audio.
+  </audio>
+ 
+</fieldset>
+
+<!-- ── PARAMÈTRES ───────────────────────────────────────────────────────── -->
 <fieldset>
   <legend>Paramètres</legend>
   <div class="grid">
-    <label>Slot (s) :</label><input type="number" id="slot" value="30" min="5">
+    <label>Slot (s) :</label><input type="number" id="slot" value="20" min="5">
     <label>Overlap (s) :</label><input type="number" id="overlap" value="5" min="0">
+    <label>Écoute (s) :</label><input type="number" id="listen" value="8" min="0">  <!-- ← nouveau -->
     <label>Pools :</label><input type="number" id="pools" value="1" min="1">
     <label>Countdown (s) :</label><input type="number" id="countdown" value="3" min="0">
-  </div>
+</div>
   <div class="help">La session tourne tant que vous ne cliquez pas sur Arrêter (live). Countdown 0 = démarrage immédiat.</div>
   <div style="margin-top:12px">
-    <button onclick="send('admin_start')">Démarrer</button>
-    <button onclick="send('admin_pause')">Pause / Reprendre</button>
-    <button onclick="send('admin_stop')">Arrêter</button>
+    <button onclick="send('admin_start')">▶ Démarrer</button>
+    <button onclick="send('admin_pause')">⏸ Pause / Reprendre</button>
+    <button onclick="send('admin_stop')">⏹ Arrêter</button>
   </div>
-  <div style="margin-top:10px">État : <span id="state-display" class="state-stopped">inactif</span></div>
+  <div style="margin-top:10px">
+    État session : <span id="state-display" class="state-stopped">inactif</span>
+    <span id="audio-status" style="color:#888; font-size:0.85em;"></span>
+  </div>
 </fieldset>
 
+<!-- ── UTILISATEURS ─────────────────────────────────────────────────────── -->
 <fieldset>
   <legend>Utilisateurs connectés</legend>
   <table id="user-table">
     <thead><tr><th>Nom</th><th>Pool</th><th>Position</th><th>Réassigner</th></tr></thead>
     <tbody><tr><td colspan="4">Aucun</td></tr></tbody>
   </table>
-  <div class="help">Position 0 = premier à prendre la main, 1 = deuxième, etc. Les positions sont compactées automatiquement quand quelqu'un part ou est déplacé.</div>
+  <div class="help">Position 0 = premier à prendre la main, 1 = deuxième, etc.</div>
 </fieldset>
 
+<!-- ── FLUX TEMPS RÉEL ──────────────────────────────────────────────────── -->
 <fieldset>
   <legend>Flux temps réel</legend>
   <div id="log">En attente...</div>
 </fieldset>
 
+<!-- ── FICHIERS EXPORTÉS ────────────────────────────────────────────────── -->
 <fieldset>
   <legend>Fichiers exportés</legend>
   <div class="files" id="files">(rien encore)</div>
@@ -74,6 +94,8 @@ const logDiv = document.getElementById('log');
 const userTbody = document.querySelector('#user-table tbody');
 const stateDisplay = document.getElementById('state-display');
 const filesDiv = document.getElementById('files');
+const audioPlayer = document.getElementById('audio-player');
+const audioStatus = document.getElementById('audio-status');
 let currentUsers = [];
 let numPools = 1;
 
@@ -103,7 +125,7 @@ ws.onmessage = (event) => {
       stateDisplay.innerText = "EN PAUSE";
       stateDisplay.className = "state-paused";
     } else {
-      stateDisplay.innerText = `actif - slot ${s.slot_index} - ${s.time_left}s restantes`;
+      stateDisplay.innerText = `actif — slot ${s.slot_index} — ${s.time_left}s restantes`;
       stateDisplay.className = "state-running";
     }
     renderUsers();
@@ -111,12 +133,6 @@ ws.onmessage = (event) => {
 
   if (data.type === "new_text") {
     addLog(`[P${data.pool} | slot ${data.slot_index}] ${data.user} : ${escapeHtml(data.text)}`);
-  }
-
-  if (data.type === "live_typing") {
-    // Affichage léger dans le log (en gris)
-    // Limité pour ne pas spammer
-    // On l'ignore dans l'admin pour rester lisible
   }
 
   if (data.type === "session_ended") {
@@ -130,6 +146,80 @@ ws.onmessage = (event) => {
     }
   }
 };
+
+// ── Contrôle audio synchronisé avec la session ─────────────────────────────
+
+function send(type) {
+  const payload = {
+    type,
+    slot: document.getElementById('slot').value,
+    overlap: document.getElementById('overlap').value,
+    listen: document.getElementById('listen').value,
+    pools: document.getElementById('pools').value,
+    countdown: document.getElementById('countdown').value,
+  };
+  ws.send(JSON.stringify(payload));
+  addLog(`> ${type}`);
+
+  // Lancer l'audio automatiquement au démarrage
+// Lancer l'audio automatiquement au démarrage
+if (type === 'admin_start') {
+    const countdown = parseInt(document.getElementById('countdown').value) || 0;
+    audioPlayer.currentTime = 0;
+    
+    if (countdown > 0) {
+        // Attendre la fin du countdown avant de lancer l'audio
+        audioStatus.textContent = `⏳ Audio démarre dans ${countdown}s...`;
+        audioStatus.style.color = "#b87000";
+        setTimeout(() => {
+            audioPlayer.play()
+                .then(() => {
+                    audioStatus.textContent = "🔊 Audio en cours";
+                    audioStatus.style.color = "#2c7a2c";
+                })
+                .catch(() => {
+                    audioStatus.textContent = "⚠️ Cliquez Play sur le player pour lancer l'audio";
+                    audioStatus.style.color = "#d63f00";
+                    addLog("⚠️ Autoplay bloqué — cliquez manuellement sur Play dans le player audio.");
+                });
+        }, countdown * 1000); // attendre countdown secondes
+    } else {
+        audioPlayer.play()
+            .then(() => {
+                audioStatus.textContent = "🔊 Audio en cours";
+                audioStatus.style.color = "#2c7a2c";
+            })
+            .catch(() => {
+                audioStatus.textContent = "⚠️ Cliquez Play sur le player pour lancer l'audio";
+                audioStatus.style.color = "#d63f00";
+                addLog("⚠️ Autoplay bloqué — cliquez manuellement sur Play dans le player audio.");
+            });
+    }
+}
+
+  // Pause/reprise audio synchronisée
+  if (type === 'admin_pause') {
+    if (audioPlayer.paused) {
+      audioPlayer.play();
+      audioStatus.textContent = "🔊 Audio en cours";
+      audioStatus.style.color = "#2c7a2c";
+    } else {
+      audioPlayer.pause();
+      audioStatus.textContent = "⏸ Audio en pause";
+      audioStatus.style.color = "#b87000";
+    }
+  }
+
+  // Arrêt audio
+  if (type === 'admin_stop') {
+    audioPlayer.pause();
+    audioPlayer.currentTime = 0;
+    audioStatus.textContent = "⏹ Audio arrêté";
+    audioStatus.style.color = "#888";
+  }
+}
+
+// ── Rendu tableau utilisateurs ─────────────────────────────────────────────
 
 function renderUsers() {
   if (!currentUsers.length) {
@@ -148,7 +238,7 @@ function renderUsers() {
           <label style="font-size:0.85em;color:#666">Pool :</label>
           <select id="pool-${u.id}">${poolOpts}</select>
           <label style="font-size:0.85em;color:#666;margin-left:6px">Position :</label>
-          <input type="number" id="order-${u.id}" value="${u.order}" min="0" style="width:50px" title="Position dans la rotation : 0 = premier à passer, 1 = deuxième, etc.">
+          <input type="number" id="order-${u.id}" value="${u.order}" min="0" style="width:50px">
           <button class="reassign-btn" onclick="reassign('${u.id}')">Appliquer</button>
         </td>
       </tr>
@@ -161,18 +251,6 @@ function reassign(uid) {
   const order = parseInt(document.getElementById(`order-${uid}`).value);
   ws.send(JSON.stringify({ type: "admin_assign", user_id: uid, pool_id: pool, order: order }));
   addLog(`> admin_assign ${uid} → pool ${pool} ordre ${order}`);
-}
-
-function send(type) {
-  const payload = {
-    type,
-    slot: document.getElementById('slot').value,
-    overlap: document.getElementById('overlap').value,
-    pools: document.getElementById('pools').value,
-    countdown: document.getElementById('countdown').value,
-  };
-  ws.send(JSON.stringify(payload));
-  addLog(`> ${type}`);
 }
 
 function addLog(msg) {

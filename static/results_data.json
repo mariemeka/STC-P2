@@ -1,0 +1,26 @@
+[
+  {
+    "config": "slot=20s | overlap=3s",
+    "slot_duration": 20,
+    "overlap": 3,
+    "nb_sous_titreurs": 2,
+    "couverture": 0.0,
+    "doublons": 0.0,
+    "mots_manques": 39,
+    "mots_total": 44,
+    "duree": 49.7,
+    "texte_fusionne": ""
+  },
+  {
+    "config": "slot=15s | overlap=3s",
+    "slot_duration": 15,
+    "overlap": 3,
+    "nb_sous_titreurs": 2,
+    "couverture": 0.0,
+    "doublons": 0.0,
+    "mots_manques": 39,
+    "mots_total": 44,
+    "duree": 49.6,
+    "texte_fusionne": "eperience"
+  }
+]

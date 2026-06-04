@@ -80,7 +80,7 @@ def _find_word_overlap(prev_words: List[str], next_words: List[str]) -> Tuple[in
     # Cas 1 : match exact - les k derniers mots de prev == les k premiers de next
     for k in range(max_k, 0, -1):
         if prev_words[-k:] == next_words[:k]:
-            return k, k
+            return 0, k
 
     # Cas 2 : les (k-1) derniers mots exacts + le dernier mot de prev est
     # un préfixe strict du k-ième mot de next (mot partiel complété dans next)
@@ -94,7 +94,7 @@ def _find_word_overlap(prev_words: List[str], next_words: List[str]) -> Tuple[in
                 if (prev_words[-k:-1] == next_words[:k - 1]
                         and next_words[k - 1].startswith(last)
                         and next_words[k - 1] != last):
-                    return k, k - 1
+                    return 1, k - 1
 
     return 0, 0
 
