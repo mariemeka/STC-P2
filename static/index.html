@@ -111,7 +111,8 @@ function connect() {
   if (!username) { alert("Nom requis"); return; }
   localStorage.setItem('stc_username', username);
 
-  ws = new WebSocket(`ws://${location.host}/ws`);
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
 
   ws.onopen = () => {
     ws.send(JSON.stringify({ type: "join", user_id: userId, username: username }));

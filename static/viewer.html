@@ -53,7 +53,8 @@
 <div id="pools"></div>
 
 <script>
-const ws = new WebSocket(`ws://${location.host}/ws`);
+const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+const ws = new WebSocket(`${proto}://${location.host}/ws`);
 const statusDiv = document.getElementById('status');
 const poolsDiv = document.getElementById('pools');
 const cdBanner = document.getElementById('countdown-banner');

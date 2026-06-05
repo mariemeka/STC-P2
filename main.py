@@ -4,6 +4,8 @@ import uuid
 import os
 import asyncio
 from typing import Dict
+from symspellpy import SymSpell, Verbosity
+import unicodedata
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
@@ -18,6 +20,74 @@ app = FastAPI()
 
 if not os.path.exists("data"):
     os.makedirs("data")
+
+def _strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+_sym = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
+_sym.load_dictionary("fr-100k.txt", term_index=0, count_index=1, encoding="utf-8")
+
+# Mapping mot-sans-accent → mot-accentué (ex: "regler" → "régler")
+_accent_map: dict[str, str] = {}
+for entry in _sym.words.keys():
+    stripped = _strip_accents(entry)
+    if stripped != entry and stripped not in _accent_map:
+        _accent_map[stripped] = entry
+
+def correct_text(text: str, final: bool = False) -> str:
+    # Normalise les apostrophes typographiques → standard
+    text = text.replace("’", "'").replace("ʼ", "'")
+    words = text.split(" ")
+    trailing_space = text.endswith(" ")
+    # final=True (envoi) → on corrige tous les mots
+    # final=False (live) → on laisse le dernier mot (peut être incomplet)
+    complete = words if (trailing_space or final) else words[:-1]
+    last = [] if (trailing_space or final) else [words[-1]]
+
+    corrected = []
+    for word in complete:
+        if not word:
+            corrected.append(word)
+            continue
+        w_lower = word.lower()
+        # Mots avec apostrophe → on corrige chaque partie séparément
+        if "'" in w_lower:
+            sep = "'"
+            # Si le mot complet existe dans le dico (ex: aujourd’hui) → on garde
+            if _sym.lookup(w_lower, Verbosity.TOP, max_edit_distance=0):
+                corrected.append(word)
+                continue
+            parts = w_lower.split(sep, 1)
+            fixed_parts = []
+            for part in parts:
+                if not part or len(part) < 3:
+                    fixed_parts.append(part)
+                elif _sym.lookup(part, Verbosity.TOP, max_edit_distance=0):
+                    fixed_parts.append(part)
+                elif part in _accent_map:
+                    fixed_parts.append(_accent_map[part])
+                else:
+                    sugg = _sym.lookup(part, Verbosity.CLOSEST, max_edit_distance=2)
+                    fixed_parts.append(sugg[0].term if sugg else part)
+            corrected.append(sep.join(fixed_parts))
+            continue
+        # 1. Mot déjà correct dans le dico → on garde
+        if _sym.lookup(w_lower, Verbosity.TOP, max_edit_distance=0):
+            corrected.append(word)
+            continue
+        # 2. Mot sans accent qui correspond à un mot accentué → on restaure l'accent
+        if w_lower in _accent_map:
+            fix = _accent_map[w_lower]
+            corrected.append(fix.capitalize() if word[0].isupper() else fix)
+            continue
+        # 3. Vraie faute d'orthographe → correction symspell
+        suggestions = _sym.lookup(w_lower, Verbosity.CLOSEST, max_edit_distance=2)
+        if suggestions:
+            fix = suggestions[0].term
+            corrected.append(fix.capitalize() if word[0].isupper() else fix)
+        else:
+            corrected.append(word)
+    return " ".join(corrected + last) + (" " if trailing_space else "")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -136,10 +206,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     if not state.get("is_my_turn"):
                         continue
                     slot_idx = state.get("my_slot_index", 0)
+                    corrected = correct_text(msg["text"], final=True)
                     new_caption = Caption(
                         user_id=user_id,
                         pool_id=user.pool_id,
-                        text=msg["text"],
+                        text=corrected,
                         timestamp=time.time(),
                         slot_index=slot_idx,
                     )
@@ -147,7 +218,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     await broadcast({
                         "type": "new_text",
                         "pool": user.pool_id,
-                        "text": msg["text"],
+                        "text": corrected,
                         "user": user.username,
                         "slot_index": slot_idx,
                     })
@@ -162,6 +233,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     if state.get("is_my_turn"):
                         text = msg.get("text", "")
                         slot_idx = state.get("my_slot_index", 0)
+                        corrected_live = correct_text(text, final=False)
 
                         # Sauvegarde throttlée : 1 ligne CSV / seconde max pour ce (user, slot)
                         if text.strip():
@@ -171,7 +243,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 save_caption_to_csv(session_id, Caption(
                                     user_id=user_id,
                                     pool_id=user.pool_id,
-                                    text=text,
+                                    text=corrected_live,
                                     timestamp=now_ts,
                                     slot_index=slot_idx,
                                 ))
@@ -182,7 +254,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             "type": "live_typing",
                             "pool": user.pool_id,
                             "user": user.username,
-                            "text": text,
+                            "text": corrected_live,
                             "slot_index": slot_idx,
                         })
 
