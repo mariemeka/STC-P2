@@ -115,10 +115,6 @@ async def get_viewer():
     with open("static/viewer.html", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
-@app.get("/video")
-async def get_video():
-    with open("static/video.html", encoding="utf-8") as f:
-        return HTMLResponse(f.read())
 
 @app.get("/download/{filename}")
 async def download(filename: str):
@@ -126,6 +122,11 @@ async def download(filename: str):
     if not os.path.isfile(path):
         return HTMLResponse("Not found", status_code=404)
     return FileResponse(path, filename=filename)
+
+@app.get("/results")
+async def get_results():
+    with open("static/results.html", encoding="utf-8") as f:
+        return HTMLResponse(f.read())
 
 # ─── WEBSOCKET ────────────────────────────────────────────────────────────
 

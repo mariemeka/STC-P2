@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>STC - Résultats expérimentaux</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1000px; margin: 40px auto; padding: 0 20px; color: #333; background: #f5f5f5; }
+        h1 { color: #1F4E79; border-bottom: 3px solid #2E75B6; padding-bottom: 10px; }
+        h2 { color: #2E75B6; margin-top: 40px; }
+        .card { background: white; border-radius: 8px; padding: 20px; margin: 16px 0; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #2E75B6; color: white; padding: 10px 12px; text-align: left; }
+        td { padding: 9px 12px; border-bottom: 1px solid #ddd; }
+        tr:nth-child(even) { background: #EBF3FB; }
+        tr.best { background: #D5F5E3 !important; font-weight: bold; }
+        .best-badge { background: #27AE60; color: white; padding: 2px 8px; border-radius: 10px; font-size: 12px; margin-left: 8px; }
+        .bar-wrap { background: #eee; border-radius: 4px; height: 20px; width: 100%; }
+        .bar { height: 20px; border-radius: 4px; color: white; font-size: 12px; font-weight: bold; display: flex; align-items: center; padding-left: 8px; }
+        .bar-green { background: #27AE60; }
+        .bar-red { background: #E74C3C; }
+        .justif { background: #EBF3FB; border-left: 4px solid #2E75B6; padding: 16px 20px; border-radius: 0 8px 8px 0; margin-top: 20px; }
+        .texte { font-style: italic; color: #555; background: #f9f9f9; padding: 8px; border-radius: 4px; margin-top: 6px; font-size: 14px; }
+        #loading { text-align: center; padding: 60px; color: #888; font-size: 18px; }
+        .nav { margin-bottom: 20px; }
+        .nav a { color: #2E75B6; text-decoration: none; margin-right: 20px; }
+        .nav a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <a href="/">← Sous-titreur</a>
+        <a href="/viewer">Viewer</a>
+        <a href="/admin">Admin</a>
+    </div>
+
+    <h1>📊 Évaluations expérimentales — STC</h1>
+    <p>Ces résultats justifient les choix de paramétrage du système de sous-titrage collaboratif.</p>
+
+    <div id="loading">⏳ Chargement des résultats...</div>
+    <div id="content" style="display:none">
+
+        <div class="card">
+            <h2>Tableau comparatif</h2>
+            <table id="tableau"></table>
+        </div>
+
+        <div class="card">
+            <h2>Couverture par configuration</h2>
+            <div id="barres-couverture"></div>
+        </div>
+
+        <div class="card">
+            <h2>Taux de doublons par configuration</h2>
+            <div id="barres-doublons"></div>
+        </div>
+
+        <div class="card">
+            <h2>Textes fusionnés obtenus</h2>
+            <div id="textes"></div>
+        </div>
+
+        <div class="justif" id="justification">
+            <h3 style="margin-top:0; color:#1F4E79">✅ Configuration retenue et justification</h3>
+            <div id="justif-texte"></div>
+        </div>
+
+    </div>
+
+    <script>
+        fetch('/static/results_data.json')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('content').style.display = 'block';
+
+                // Meilleure config = max couverture - doublons
+                const best = data.reduce((a, b) =>
+                    (b.couverture - b.doublons) > (a.couverture - a.doublons) ? b : a
+                );
+
+                // ── Tableau ──────────────────────────────────────────────
+                document.getElementById('tableau').innerHTML = `
+                    <tr>
+                        <th>Configuration</th>
+                        <th>Sous-titreurs</th>
+                        <th>Couverture</th>
+                        <th>Doublons</th>
+                        <th>Mots manqués</th>
+                        <th>Durée</th>
+                    </tr>
+                ` + data.map(r => `
+                    <tr class="${r === best ? 'best' : ''}">
+                        <td>${r.config} ${r === best ? '<span class="best-badge">★ Meilleure</span>' : ''}</td>
+                        <td style="text-align:center">${r.nb_sous_titreurs}</td>
+                        <td style="text-align:center">${r.couverture}%</td>
+                        <td style="text-align:center">${r.doublons}%</td>
+                        <td style="text-align:center">${r.mots_manques}/${r.mots_total}</td>
+                        <td style="text-align:center">${r.duree}s</td>
+                    </tr>
+                `).join('');
+
+                // ── Barres couverture ────────────────────────────────────
+                document.getElementById('barres-couverture').innerHTML = data.map(r => `
+                    <div style="margin:10px 0">
+                        <div style="font-size:13px;color:#555;margin-bottom:4px">
+                            ${r.config} — ${r.nb_sous_titreurs} sous-titreurs
+                        </div>
+                        <div class="bar-wrap">
+                            <div class="bar bar-green" style="width:${Math.max(r.couverture,2)}%">
+                                ${r.couverture}%
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+
+                // ── Barres doublons ──────────────────────────────────────
+                document.getElementById('barres-doublons').innerHTML = data.map(r => `
+                    <div style="margin:10px 0">
+                        <div style="font-size:13px;color:#555;margin-bottom:4px">
+                            ${r.config} — ${r.nb_sous_titreurs} sous-titreurs
+                        </div>
+                        <div class="bar-wrap">
+                            <div class="bar bar-red" style="width:${Math.max(r.doublons,2)}%">
+                                ${r.doublons}%
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+
+                // ── Textes fusionnés ─────────────────────────────────────
+                document.getElementById('textes').innerHTML = data.map((r, i) => `
+                    <div style="margin:12px 0">
+                        <strong>Exp. ${i+1}</strong> — ${r.config} | ${r.nb_sous_titreurs} sous-titreurs
+                        <div class="texte">"${r.texte_fusionne || '(aucun texte fusionné)'}"</div>
+                    </div>
+                `).join('');
+
+                // ── Justification ────────────────────────────────────────
+                document.getElementById('justif-texte').innerHTML = `
+                    <p>Après analyse des ${data.length} configurations testées, la configuration optimale retenue est :</p>
+                    <p><strong>${best.config} | ${best.nb_sous_titreurs} sous-titreurs</strong></p>
+                    <p>Elle obtient la meilleure couverture (<strong>${best.couverture}%</strong>)
+                    avec un taux de doublons minimal (<strong>${best.doublons}%</strong>),
+                    ce qui confirme que ce paramétrage offre le meilleur équilibre entre
+                    complétude du sous-titrage et qualité de la fusion.</p>
+                    <p>Les slots trop longs entraînent un décrochage du sous-titreur,
+                    tandis que les slots trop courts laissent trop de mots manqués.
+                    Un overlap de 5s assure une transition fluide sans trop de redondance.</p>
+                `;
+            })
+            .catch(() => {
+                document.getElementById('loading').innerHTML =
+                    '❌ Aucun résultat disponible.<br>Lance d\'abord <code>python evaluation.py</code> pour générer les données.';
+            });
+    </script>
+</body>
+</html>

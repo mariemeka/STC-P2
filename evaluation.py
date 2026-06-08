@@ -122,8 +122,8 @@ def lancer_experience(config):
     # Récupérer le texte fusionné
     texte_final = ""
     if 1 in pool_files and pool_files[1]:
-        texte_final = " ".join(c.text for c in pool_files[1])
-
+        texte_final = " ".join(c["text"] for c in pool_files[1])
+        
     return {
         "config": config,
         "texte_fusionne": texte_final,
