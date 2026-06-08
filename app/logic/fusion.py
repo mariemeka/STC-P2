@@ -43,24 +43,17 @@ def fuse(contributions: List[str]) -> str:
 
 
 def merge_user_captions(captions: List[dict]) -> str:
+    """
+    Pour un même (user, slot), garde uniquement la dernière contribution
+    la plus longue — c'est toujours la plus complète car le sous-titreur
+    tape progressivement.
+    """
     captions = sorted(captions, key=lambda c: c["timestamp"])
-    lines: List[str] = []
-    for c in captions:
-        text = (c.get("text") or "").strip()
-        if not text:
-            continue
-        if lines and text == lines[-1]:
-            continue
-        if lines and text.startswith(lines[-1]):
-            lines[-1] = text
-        elif lines and lines[-1].startswith(text):
-            continue
-        elif lines and _is_typo_correction(lines[-1], text):
-            lines[-1] = text
-        else:
-            lines.append(text)
-    return "\n".join(lines)
-
+    texts = [c.get("text", "").strip() for c in captions if c.get("text", "").strip()]
+    if not texts:
+        return ""
+    # On garde la plus longue (dernière contribution complète)
+    return max(texts, key=len)
 
 def _find_word_overlap(prev_words: List[str], next_words: List[str]) -> Tuple[int, int]:
     """Trouve combien de mots de la FIN de prev se retrouvent au DÉBUT de next.
@@ -113,26 +106,35 @@ def _dedupe_pair(prev_text: str, next_text: str) -> Tuple[str, str]:
 
     prev_words = prev_last.split()
     next_words = next_first.split()
-    k_prev, k_next = _find_word_overlap(prev_words, next_words)
 
-    if k_prev == 0 and k_next == 0:
+    # Chercher combien de mots du début de next
+    # correspondent à la fin de prev
+    max_k = min(len(prev_words), len(next_words))
+    k_next = 0
+
+    for k in range(max_k, 0, -1):
+        if prev_words[-k:] == next_words[:k]:
+            k_next = k
+            break
+
+    # Cas mot partiel : dernier mot de prev est un préfixe d'un mot de next
+    if k_next == 0 and prev_words and next_words:
+        last = prev_words[-1]
+        if len(last) >= 2 and next_words[0].startswith(last) and next_words[0] != last:
+            k_next = 1
+
+    if k_next == 0:
         return prev_text, next_text
 
-    # Reconstruit la dernière ligne de prev
-    new_last = " ".join(prev_words[:-k_prev]) if k_prev > 0 else prev_last
-    if new_last:
-        prev_lines[-1] = new_last
-    else:
-        prev_lines = prev_lines[:-1]
-
-    # Reconstruit la première ligne de next
-    new_first = " ".join(next_words[k_next:]) if k_next > 0 else next_first
+    # On garde prev intact
+    # On supprime uniquement le début de next (les k_next mots dupliqués)
+    new_first = " ".join(next_words[k_next:])
     if new_first:
         next_lines[0] = new_first
     else:
         next_lines = next_lines[1:]
 
-    return "\n".join(prev_lines), "\n".join(next_lines)
+    return prev_text, "\n".join(next_lines)
 
 
 def fuse_session(session_id: str, num_pools: int) -> Dict[int, List[dict]]:
@@ -175,13 +177,11 @@ def fuse_session(session_id: str, num_pools: int) -> Dict[int, List[dict]]:
         # 3) Dédup cross-slot
         cleaned: List[dict] = []
         for s in fused_slots:
+            if not s["text"].strip():
+                continue
             if cleaned:
-                new_prev_text, new_next_text = _dedupe_pair(
-                    cleaned[-1]["text"], s["text"]
-                )
-                cleaned[-1] = dict(cleaned[-1], text=new_prev_text)
-                if not cleaned[-1]["text"].strip():
-                    cleaned.pop()
+                prev_text = cleaned[-1]["text"]
+                _, new_next_text = _dedupe_pair(prev_text, s["text"])
                 if not new_next_text.strip():
                     continue
                 s = dict(s, text=new_next_text)
