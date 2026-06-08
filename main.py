@@ -21,7 +21,7 @@ app = FastAPI()
 if not os.path.exists("data"):
     os.makedirs("data")
 
-# ── Correction orthographique (Ilyass) ────────────────────────────────────
+# ── Correction orthographique ─────────────────────────────────────────────
 
 def _strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
@@ -41,7 +41,7 @@ if _dict_loaded:
 
 def correct_text(text: str, final: bool = False) -> str:
     if not _dict_loaded:
-        return text  # si pas de dictionnaire, on retourne le texte tel quel
+        return text
     text = text.replace("\u2019", "'").replace("\u02bc", "'")
     words = text.split(" ")
     trailing_space = text.endswith(" ")
@@ -115,6 +115,10 @@ async def get_viewer():
     with open("static/viewer.html", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
+@app.get("/results")
+async def get_results():
+    with open("static/results.html", encoding="utf-8") as f:
+        return HTMLResponse(f.read())
 
 @app.get("/download/{filename}")
 async def download(filename: str):
@@ -122,11 +126,6 @@ async def download(filename: str):
     if not os.path.isfile(path):
         return HTMLResponse("Not found", status_code=404)
     return FileResponse(path, filename=filename)
-
-@app.get("/results")
-async def get_results():
-    with open("static/results.html", encoding="utf-8") as f:
-        return HTMLResponse(f.read())
 
 # ─── WEBSOCKET ────────────────────────────────────────────────────────────
 
@@ -234,6 +233,18 @@ async def websocket_endpoint(websocket: WebSocket):
                         text = msg.get("text", "")
                         slot_idx = state.get("my_slot_index", 0)
                         corrected_live = correct_text(text, final=False)
+
+                        # ── Mesure vitesse de frappe + adaptation ─────────
+                        nb_mots = len(text.split()) if text.strip() else 0
+                        elapsed = state.get("elapsed", 1)
+                        cycle_time = max(1, scheduler.config.slot_duration - scheduler.config.overlap_duration)
+                        temps_dans_slot = elapsed % cycle_time
+                        if temps_dans_slot > 0 and nb_mots > 0:
+                            vitesse = round(nb_mots / temps_dans_slot, 2)
+                            scheduler.update_typing_speed(user_id, vitesse)
+                            await broadcast_user_list()  # mise à jour admin
+                        # ─────────────────────────────────────────────────
+
                         if text.strip():
                             key = (user_id, slot_idx)
                             now_ts = time.time()
@@ -246,6 +257,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                     slot_index=slot_idx,
                                 ))
                                 last_live_save[key] = now_ts
+
                         await broadcast_to_viewers({
                             "type": "live_typing",
                             "pool": user.pool_id,
@@ -269,7 +281,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await broadcast_user_list()
             await broadcast_state("sync_update")
 
-# ─── BACKGROUND SYNC + KEEPALIVE (Ilyass) ─────────────────────────────────
+# ─── BACKGROUND SYNC + KEEPALIVE ──────────────────────────────────────────
 
 @app.on_event("startup")
 async def start_sync_loop():
@@ -298,13 +310,11 @@ async def sync_loop():
                 except Exception:
                     pass
         elif tick % 60 == 0:
-            # Keepalive toutes les 30s quand inactif
             for ws in list(connections.values()) + list(viewers.values()):
                 try:
                     await ws.send_json({"type": "ping"})
                 except Exception:
                     pass
-
 async def stop_and_export():
     if not scheduler.config.is_active:
         return
@@ -312,6 +322,18 @@ async def stop_and_export():
     pool_files = fuse_session(session_id, scheduler.config.num_pools)
     exports = []
     for pool_id, captions in pool_files.items():
+
+        # ── Correction post-fusion sur le texte final complet ─────────
+        texte_complet = " ".join(c["text"] for c in captions if c["text"].strip())
+        texte_corrige = correct_text(texte_complet, final=True)
+        mots = texte_corrige.split()
+        mots_par_slot = max(1, len(mots) // len(captions)) if captions else len(mots)
+        for i, caption in enumerate(captions):
+            debut = i * mots_par_slot
+            fin = debut + mots_par_slot if i < len(captions) - 1 else len(mots)
+            caption["text"] = " ".join(mots[debut:fin])
+        # ─────────────────────────────────────────────────────────────
+
         srt_path = os.path.join("data", f"{session_id}_pool_{pool_id}.srt")
         txt_path = os.path.join("data", f"{session_id}_pool_{pool_id}.txt")
         with open(srt_path, "w", encoding="utf-8") as f:
@@ -326,7 +348,14 @@ async def stop_and_export():
 
 async def broadcast_user_list():
     user_list = [
-        {"id": u.user_id, "name": u.username, "pool": u.pool_id, "order": u.order_in_pool}
+        {
+            "id": u.user_id,
+            "name": u.username,
+            "pool": u.pool_id,
+            "order": u.order_in_pool,
+            "speed": u.typing_speed,
+            "personal_slot": u.slot_duration_personal or 0,
+        }
         for u in scheduler.users.values()
     ]
     await broadcast({"type": "user_update", "users": user_list})

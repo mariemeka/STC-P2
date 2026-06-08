@@ -21,16 +21,21 @@
   .grid { display: grid; grid-template-columns: 100px 80px; gap: 6px; align-items: center; max-width: 220px; }
   .help { color: #666; font-size: 0.85em; }
   #audio-status { font-weight: bold; margin-left: 10px; }
+  .speed-fast { color: #2c7a2c; font-weight: bold; }
+  .speed-slow { color: #d63f00; font-weight: bold; }
+  .speed-normal { color: #888; }
 </style>
 </head>
 <body>
 
 <h2>STC - Console Admin</h2>
 
+<!-- ── RACCOURCIS ───────────────────────────────────────────────────────── -->
 <fieldset>
   <legend>Raccourcis</legend>
   <button onclick="window.open('/', '_blank')">Ouvrir un sous-titreur</button>
   <button onclick="window.open('/viewer', '_blank')">Ouvrir le viewer</button>
+  <button onclick="window.open('/results', '_blank')">Voir les résultats</button>
   <span class="help">S'ouvrent dans un nouvel onglet.</span>
 </fieldset>
 
@@ -43,7 +48,6 @@
   </audio>
   <div class="help" style="margin-top:8px;">
     L'audio se lance automatiquement quand vous cliquez sur <strong>Démarrer</strong> (après le countdown).<br>
-    ⚠️ Assurez-vous que les enceintes de la salle sont activées avant de démarrer.
   </div>
 </fieldset>
 
@@ -51,12 +55,19 @@
 <fieldset>
   <legend>Paramètres</legend>
   <div class="grid">
-    <label>Slot (s) :</label><input type="number" id="slot" value="20" min="5">
-    <label>Overlap (s) :</label><input type="number" id="overlap" value="5" min="0">
-    <label>Pools :</label><input type="number" id="pools" value="1" min="1">
-    <label>Countdown (s) :</label><input type="number" id="countdown" value="3" min="0">
+    <label>Slot (s) :</label>
+    <input type="number" id="slot" value="20" min="5">
+    <label>Overlap (s) :</label>
+    <input type="number" id="overlap" value="5" min="0">
+    <label>Pools :</label>
+    <input type="number" id="pools" value="1" min="1">
+    <label>Countdown (s) :</label>
+    <input type="number" id="countdown" value="3" min="0">
   </div>
-  <div class="help">La session tourne tant que vous ne cliquez pas sur Arrêter (live). Countdown 0 = démarrage immédiat.</div>
+  <div class="help">
+    La session tourne tant que vous ne cliquez pas sur Arrêter. Countdown 0 = démarrage immédiat.<br>
+    ✅ <strong>Adaptation dynamique</strong> : le slot de chaque sous-titreur s'ajuste automatiquement à sa vitesse de frappe.
+  </div>
   <div style="margin-top:12px">
     <button onclick="send('admin_start')">▶ Démarrer</button>
     <button onclick="send('admin_pause')">⏸ Pause / Reprendre</button>
@@ -70,15 +81,28 @@
 
 <!-- ── UTILISATEURS ─────────────────────────────────────────────────────── -->
 <fieldset>
-  <legend>Utilisateurs connectés</legend>
+  <legend>Utilisateurs connectés — <span id="nb-users">0</span> sous-titreur(s)</legend>
   <table id="user-table">
-    <thead><tr><th>Nom</th><th>Pool</th><th>Position</th><th>Réassigner</th></tr></thead>
-    <tbody><tr><td colspan="4">Aucun</td></tr></tbody>
+    <thead>
+      <tr>
+        <th>Nom</th>
+        <th>Pool</th>
+        <th>Position</th>
+        <th>Vitesse</th>
+        <th>Slot adapté</th>
+        <th>Réassigner</th>
+      </tr>
+    </thead>
+    <tbody><tr><td colspan="6">Aucun</td></tr></tbody>
   </table>
-  <div class="help">Position 0 = premier à prendre la main, 1 = deuxième, etc.</div>
+  <div class="help">
+    🟢 Rapide (&ge;1.5 m/s) → slot +5s &nbsp;|&nbsp;
+    🔴 Lent (&le;0.8 m/s) → slot -5s &nbsp;|&nbsp;
+    ⚪ Normal → slot standard
+  </div>
 </fieldset>
 
-<!-- ── FLUX TEMPS RÉEL (Ilyass) ────────────────────────────────────────── -->
+<!-- ── FLUX TEMPS RÉEL ──────────────────────────────────────────────────── -->
 <fieldset>
   <legend>Flux temps réel</legend>
   <div id="live-area" style="min-height:1.6rem;padding:4px 8px;background:#f0f4ff;border:1px solid #c8d4f0;margin-bottom:6px;font-size:0.9rem;color:#555">
@@ -94,7 +118,6 @@
 </fieldset>
 
 <script>
-// Fix WebSocket wss (Ilyass) : supporte http et https
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
 const ws = new WebSocket(`${proto}://${location.host}/ws`);
 const logDiv = document.getElementById('log');
@@ -106,7 +129,7 @@ const audioStatus = document.getElementById('audio-status');
 const liveArea = document.getElementById('live-area');
 let currentUsers = [];
 let numPools = 1;
-let liveTypers = {};  // { username: { pool, text } }
+let liveTypers = {};
 
 ws.onopen = () => {
   addLog("Connecté.");
@@ -117,12 +140,12 @@ ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
 
   if (data.type === "welcome") {
-    const s = data.state;
-    if (s) updateStateDisplay(s);
+    if (data.state) updateStateDisplay(data.state);
   }
 
   if (data.type === "user_update") {
     currentUsers = data.users.filter(u => u.id !== 'admin_master');
+    document.getElementById('nb-users').textContent = currentUsers.length;
     renderUsers();
   }
 
@@ -135,12 +158,10 @@ ws.onmessage = (event) => {
 
   if (data.type === "new_text") {
     addLog(`[P${data.pool} | slot ${data.slot_index}] ${data.user} : ${escapeHtml(data.text)}`);
-    // Nettoyer le live typing de cet utilisateur quand il valide
     delete liveTypers[data.user];
     renderLiveTyping();
   }
 
-  // Live typing visible dans l'admin (Ilyass)
   if (data.type === "live_typing") {
     if (data.text && data.text.trim()) {
       liveTypers[data.user] = { pool: data.pool, text: data.text.trim() };
@@ -191,7 +212,51 @@ function renderLiveTyping() {
   ).join('<br>');
 }
 
-// ── Contrôle audio synchronisé (toi) ──────────────────────────────────────
+function renderUsers() {
+  if (!currentUsers.length) {
+    userTbody.innerHTML = '<tr><td colspan="6">Aucun</td></tr>';
+    return;
+  }
+  const baseSlot = parseInt(document.getElementById('slot').value) || 20;
+
+  userTbody.innerHTML = currentUsers.map(u => {
+    const poolOpts = Array.from({length: numPools}, (_, i) =>
+      `<option value="${i+1}" ${u.pool === i+1 ? 'selected' : ''}>Pool ${i+1}</option>`
+    ).join('');
+
+    // Affichage vitesse avec couleur
+    let speedHtml = '<span class="speed-normal">-</span>';
+    if (u.speed && u.speed > 0) {
+      const cls = u.speed >= 1.5 ? 'speed-fast' : u.speed <= 0.8 ? 'speed-slow' : 'speed-normal';
+      const icon = u.speed >= 1.5 ? '🟢' : u.speed <= 0.8 ? '🔴' : '⚪';
+      speedHtml = `<span class="${cls}">${icon} ${u.speed} m/s</span>`;
+    }
+
+    // Affichage slot adapté
+    const slotAdapt = u.personal_slot || baseSlot;
+    const slotColor = slotAdapt > baseSlot ? '#2c7a2c' : slotAdapt < baseSlot ? '#d63f00' : '#888';
+    const slotHtml = `<span style="color:${slotColor};font-weight:bold">${slotAdapt}s</span>`;
+
+    return `
+      <tr>
+        <td>${escapeHtml(u.name)}</td>
+        <td>${u.pool}</td>
+        <td>${u.order}</td>
+        <td>${speedHtml}</td>
+        <td>${slotHtml}</td>
+        <td>
+          <label style="font-size:0.85em;color:#666">Pool :</label>
+          <select id="pool-${u.id}">${poolOpts}</select>
+          <label style="font-size:0.85em;color:#666;margin-left:6px">Position :</label>
+          <input type="number" id="order-${u.id}" value="${u.order}" min="0" style="width:50px">
+          <button class="reassign-btn" onclick="reassign('${u.id}')">Appliquer</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+// ── Contrôle audio + envoi ─────────────────────────────────────────────────
 function send(type) {
   const payload = {
     type,
@@ -239,31 +304,6 @@ function send(type) {
     audioStatus.textContent = "⏹ Audio arrêté";
     audioStatus.style.color = "#888";
   }
-}
-
-function renderUsers() {
-  if (!currentUsers.length) {
-    userTbody.innerHTML = '<tr><td colspan="4">Aucun</td></tr>';
-    return;
-  }
-  userTbody.innerHTML = currentUsers.map(u => {
-    const poolOpts = Array.from({length: numPools}, (_, i) =>
-      `<option value="${i+1}" ${u.pool === i+1 ? 'selected' : ''}>Pool ${i+1}</option>`).join('');
-    return `
-      <tr>
-        <td>${escapeHtml(u.name)}</td>
-        <td>${u.pool}</td>
-        <td>${u.order}</td>
-        <td>
-          <label style="font-size:0.85em;color:#666">Pool :</label>
-          <select id="pool-${u.id}">${poolOpts}</select>
-          <label style="font-size:0.85em;color:#666;margin-left:6px">Position :</label>
-          <input type="number" id="order-${u.id}" value="${u.order}" min="0" style="width:50px">
-          <button class="reassign-btn" onclick="reassign('${u.id}')">Appliquer</button>
-        </td>
-      </tr>
-    `;
-  }).join("");
 }
 
 function reassign(uid) {
