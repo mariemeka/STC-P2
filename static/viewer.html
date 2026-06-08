@@ -1,129 +1,182 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <title>STC - Viewer</title>
-    <style>
-        body { 
-            margin: 0; background: #000; 
-            display: flex; flex-direction: column;
-            align-items: center; justify-content: center;
-            min-height: 100vh; font-family: Arial, sans-serif;
-        }
-        .video-container { position: relative; width: 90vw; max-width: 1000px; }
-        video { width: 100%; border-radius: 8px; display: block; }
+<meta charset="UTF-8">
+<title>STC - Viewer</title>
+<style>
+  body { font-family: monospace; margin: 20px; max-width: 1000px; background: #fafafa; }
+  .pool { border: 1px solid #ccc; margin-bottom: 16px; padding: 12px; background: white; }
+  .pool h3 { margin: 0 0 8px 0; color: #555; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+  .history {
+    max-height: 280px; overflow-y: auto;
+    background: #fcfcfc; border: 1px solid #eee; padding: 8px;
+    font-size: 1.1rem; line-height: 1.5;
+  }
+  .history-entry { padding: 4px 0; border-bottom: 1px dotted #ddd; }
+  .history-entry:last-child { border-bottom: none; }
+  .history-entry .ts { color: #999; font-size: 0.8rem; margin-right: 8px; }
+  .history-entry .usr { color: #1a73e8; font-weight: bold; margin-right: 6px; }
+  .history-empty { color: #999; font-style: italic; }
 
-        .subtitles-overlay {
-            position: absolute;
-            bottom: 40px; left: 50%;
-            transform: translateX(-50%);
-            width: 90%;
-            text-align: center;
-            background: rgba(0,0,0,0.75);
-            color: white;
-            font-size: 24px;
-            padding: 10px 16px;
-            border-radius: 8px;
-            min-height: 40px;
-            transition: opacity 0.3s;
-        }
+  .live-zone {
+    margin-top: 8px; padding: 8px; min-height: 2rem;
+    background: #eef4fc; border-radius: 4px;
+  }
+  .live-zone-empty { color: #999; font-style: italic; font-size: 0.9rem; }
+  .live-entry { font-size: 1.3rem; color: #1a73e8; line-height: 1.4; }
+  .live-entry .usr { color: #999; font-size: 0.85rem; margin-right: 6px; font-weight: bold; }
+  .live-entry .text::after {
+    content: '▌'; animation: blink 1s steps(1) infinite; color: #888; margin-left: 2px;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
 
-        /* Texte en cours de frappe (live) — légèrement transparent */
-        .subtitles-overlay.live { opacity: 0.75; font-style: italic; }
-
-        .top-bar {
-            width: 90vw; max-width: 1000px;
-            display: flex; justify-content: space-between;
-            color: white; font-size: 14px;
-            padding: 10px 0; opacity: 0.8;
-        }
-
-        .slot-badge {
-            background: #2E75B6; color: white;
-            padding: 2px 10px; border-radius: 12px;
-            font-size: 13px; margin-left: 8px;
-        }
-    </style>
+  #status { margin-bottom: 10px; padding: 8px; background: white; border: 1px solid #ccc; }
+  #countdown-banner {
+    display: none;
+    background: #ff6b6b; color: white; padding: 20px;
+    font-size: 2rem; font-weight: bold; text-align: center;
+    margin-bottom: 12px;
+  }
+  #countdown-banner.visible { display: block; }
+  button { font: inherit; padding: 4px 10px; }
+</style>
 </head>
 <body>
 
-    <div class="top-bar">
-        <span>📺 STC — Écran d'affichage</span>
-        <span>👥 Connectés : <strong id="nb-connectes">0</strong></span>
-        <span id="statut">🔄 Connexion...</span>
-    </div>
+<h2>STC - Viewer</h2>
+<div id="countdown-banner">La session démarre dans <span id="cd-num">3</span>...</div>
+<div id="status">Connexion...</div>
+<div style="margin-bottom:10px">
+  <button onclick="clearHistory()">Effacer l'historique affiché</button>
+  <label style="margin-left:12px"><input type="checkbox" id="autoscroll" checked> Auto-scroll</label>
+</div>
+<div id="pools"></div>
 
-    <div class="video-container">
-            <video id="player" controls>
-    <source src="/static/media/video.mp4" type="video/mp4">
-</video>
+<script>
+const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+const ws = new WebSocket(`${proto}://${location.host}/ws`);
+const statusDiv = document.getElementById('status');
+const poolsDiv = document.getElementById('pools');
+const cdBanner = document.getElementById('countdown-banner');
+const cdNum = document.getElementById('cd-num');
+const poolEls = {};
+// liveTypers[poolId] = { user: text } : permet d'afficher plusieurs typers
+// simultanés (cas overlap)
+const liveTypers = {};
 
-        <div class="subtitles-overlay" id="subtitles">
-            En attente de sous-titres...
-        </div>
-    </div>
+ws.onopen = () => {
+  statusDiv.innerText = "Connecté. En attente de sous-titres...";
+  ws.send(JSON.stringify({ type: "viewer_join" }));
+};
 
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
 
+  if (msg.type === "viewer_welcome" || msg.type === "sync_update"
+      || msg.type === "session_started" || msg.type === "session_paused") {
+    const s = msg.state;
+    const cd = s.countdown || 0;
+    if (s.active && cd > 0) {
+      cdBanner.classList.add('visible');
+      cdNum.innerText = cd;
+      statusDiv.innerText = "Démarrage imminent...";
+    } else {
+      cdBanner.classList.remove('visible');
+      if (!s.active) statusDiv.innerText = "Aucune session active.";
+      else if (s.paused) statusDiv.innerText = "Session en pause.";
+      else statusDiv.innerText = `Session active — slot ${s.slot_index} — ${s.time_left}s restantes`;
+    }
+  }
 
-    <script>
-        const ws = new WebSocket("ws://" + location.host + "/ws");
+  // Frappe en cours (avant Entrée) — diffusion live
+  if (msg.type === "live_typing") {
+    ensurePool(msg.pool);
+    if (!liveTypers[msg.pool]) liveTypers[msg.pool] = {};
+    const text = (msg.text || "").trim();
+    if (text) {
+      liveTypers[msg.pool][msg.user] = text;
+    } else {
+      delete liveTypers[msg.pool][msg.user];
+    }
+    renderLive(msg.pool);
+  }
 
-        // ── Connexion ──────────────────────────────────────────────────
-        ws.onopen = () => {
-            // S'identifier comme viewer
-            ws.send(JSON.stringify({ type: "viewer_join" }));
-            document.getElementById("statut").textContent = "✅ Connecté";
-        };
+  // Phrase validée (Entrée ou auto-envoi en fin de slot)
+  if (msg.type === "new_text") {
+    const pool = ensurePool(msg.pool);
+    const entry = document.createElement('div');
+    entry.className = 'history-entry';
+    const ts = new Date().toLocaleTimeString();
+    entry.innerHTML = `<span class="ts">[${ts} · slot ${msg.slot_index}]</span>` +
+                      `<span class="usr">${escapeHtml(msg.user)}</span>` +
+                      escapeHtml(msg.text);
+    // Supprime le placeholder "Aucun sous-titre"
+    const empty = pool.history.querySelector('.history-empty');
+    if (empty) empty.remove();
+    pool.history.appendChild(entry);
+    if (document.getElementById('autoscroll').checked) {
+      pool.history.scrollTop = pool.history.scrollHeight;
+    }
+    // L'utilisateur a validé : on retire son entrée live
+    if (liveTypers[msg.pool]) {
+      delete liveTypers[msg.pool][msg.user];
+      renderLive(msg.pool);
+    }
+  }
 
-        // ── Messages reçus ─────────────────────────────────────────────
-        ws.onmessage = (event) => {
-            const msg = JSON.parse(event.data);
+  if (msg.type === "session_ended") {
+    statusDiv.innerText = "Session terminée. L'historique reste affiché.";
+    cdBanner.classList.remove('visible');
+    // On vide UNIQUEMENT la zone live, on garde l'historique
+    Object.keys(liveTypers).forEach(p => { liveTypers[p] = {}; renderLive(p); });
+  }
+};
 
-            // Mise à jour nombre de connectés
-            if (msg.type === "user_update") {
-                document.getElementById("nb-connectes").textContent = 
-                    msg.users ? msg.users.length : 0;
-            }
+ws.onclose = () => {
+  statusDiv.innerText = "Déconnecté du serveur.";
+};
 
-            // Sous-titre confirmé (envoi final)
-            if (msg.type === "new_text") {
-                const sub = document.getElementById("subtitles");
-                sub.textContent = msg.text;
-                sub.classList.remove("live");
-            }
+function ensurePool(poolId) {
+  if (poolEls[poolId]) return poolEls[poolId];
+  const div = document.createElement('div');
+  div.className = 'pool';
+  div.innerHTML = `
+    <h3>Pool ${poolId}</h3>
+    <div class="history"><div class="history-empty">Aucun sous-titre validé pour l'instant.</div></div>
+    <div class="live-zone"><span class="live-zone-empty">Aucune frappe en cours.</span></div>
+  `;
+  poolsDiv.appendChild(div);
+  poolEls[poolId] = {
+    container: div,
+    history: div.querySelector('.history'),
+    live: div.querySelector('.live-zone'),
+  };
+  return poolEls[poolId];
+}
 
-            // Frappe en cours (live typing) — affiché en italique
-            if (msg.type === "live_typing") {
-                const sub = document.getElementById("subtitles");
-                sub.textContent = msg.text;
-                sub.classList.add("live");
-            }
+function renderLive(poolId) {
+  const pool = poolEls[poolId];
+  if (!pool) return;
+  const typers = liveTypers[poolId] || {};
+  const users = Object.keys(typers);
+  if (!users.length) {
+    pool.live.innerHTML = '<span class="live-zone-empty">Aucune frappe en cours.</span>';
+    return;
+  }
+  pool.live.innerHTML = users.map(u =>
+    `<div class="live-entry"><span class="usr">${escapeHtml(u)}</span><span class="text">${escapeHtml(typers[u])}</span></div>`
+  ).join("");
+}
 
-            // Sync état session
-            if (msg.type === "sync_update" || msg.type === "session_started") {
-                const s = msg.state;
-                if (s && s.active) {
-                    document.getElementById("statut").textContent = 
-                        `✅ Session active — slot ${s.slot_index}`;
-                }
-            }
+function clearHistory() {
+  Object.values(poolEls).forEach(p => {
+    p.history.innerHTML = '<div class="history-empty">Aucun sous-titre validé pour l\'instant.</div>';
+  });
+}
 
-            // Session terminée
-            if (msg.type === "session_ended") {
-                document.getElementById("subtitles").textContent = 
-                    "✅ Session terminée";
-                document.getElementById("statut").textContent = "Session terminée";
-            }
-        };
-
-        ws.onclose = () => {
-            document.getElementById("statut").textContent = "❌ Déconnecté";
-        };
-
-        ws.onerror = (e) => {
-            document.getElementById("statut").textContent = "⚠️ Erreur connexion";
-            console.error("WebSocket error:", e);
-        };
-    </script>
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+</script>
 </body>
 </html>

@@ -4,6 +4,8 @@ import uuid
 import os
 import asyncio
 from typing import Dict
+from symspellpy import SymSpell, Verbosity
+import unicodedata
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
@@ -19,13 +21,80 @@ app = FastAPI()
 if not os.path.exists("data"):
     os.makedirs("data")
 
+# ── Correction orthographique (Ilyass) ────────────────────────────────────
+
+def _strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+_sym = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
+_dict_loaded = False
+if os.path.exists("fr-100k.txt"):
+    _sym.load_dictionary("fr-100k.txt", term_index=0, count_index=1, encoding="utf-8")
+    _dict_loaded = True
+
+_accent_map: dict = {}
+if _dict_loaded:
+    for entry in _sym.words.keys():
+        stripped = _strip_accents(entry)
+        if stripped != entry and stripped not in _accent_map:
+            _accent_map[stripped] = entry
+
+def correct_text(text: str, final: bool = False) -> str:
+    if not _dict_loaded:
+        return text  # si pas de dictionnaire, on retourne le texte tel quel
+    text = text.replace("\u2019", "'").replace("\u02bc", "'")
+    words = text.split(" ")
+    trailing_space = text.endswith(" ")
+    complete = words if (trailing_space or final) else words[:-1]
+    last = [] if (trailing_space or final) else [words[-1]]
+    corrected = []
+    for word in complete:
+        if not word:
+            corrected.append(word)
+            continue
+        w_lower = word.lower()
+        if "'" in w_lower:
+            sep = "'"
+            if _sym.lookup(w_lower, Verbosity.TOP, max_edit_distance=0):
+                corrected.append(word)
+                continue
+            parts = w_lower.split(sep, 1)
+            fixed_parts = []
+            for part in parts:
+                if not part or len(part) < 3:
+                    fixed_parts.append(part)
+                elif _sym.lookup(part, Verbosity.TOP, max_edit_distance=0):
+                    fixed_parts.append(part)
+                elif part in _accent_map:
+                    fixed_parts.append(_accent_map[part])
+                else:
+                    sugg = _sym.lookup(part, Verbosity.CLOSEST, max_edit_distance=2)
+                    fixed_parts.append(sugg[0].term if sugg else part)
+            corrected.append(sep.join(fixed_parts))
+            continue
+        if _sym.lookup(w_lower, Verbosity.TOP, max_edit_distance=0):
+            corrected.append(word)
+            continue
+        if w_lower in _accent_map:
+            fix = _accent_map[w_lower]
+            corrected.append(fix.capitalize() if word[0].isupper() else fix)
+            continue
+        suggestions = _sym.lookup(w_lower, Verbosity.CLOSEST, max_edit_distance=2)
+        if suggestions:
+            fix = suggestions[0].term
+            corrected.append(fix.capitalize() if word[0].isupper() else fix)
+        else:
+            corrected.append(word)
+    return " ".join(corrected + last) + (" " if trailing_space else "")
+
+# ─────────────────────────────────────────────────────────────────────────
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 scheduler = Scheduler()
 connections: Dict[str, WebSocket] = {}
 viewers: Dict[str, WebSocket] = {}
 session_id = "live_session"
-# Pour throttler les sauvegardes live (1 par seconde max par user/slot)
 last_live_save: Dict[tuple, float] = {}
 LIVE_SAVE_THROTTLE = 1.0
 
@@ -46,6 +115,11 @@ async def get_viewer():
     with open("static/viewer.html", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
+@app.get("/video")
+async def get_video():
+    with open("static/video.html", encoding="utf-8") as f:
+        return HTMLResponse(f.read())
+
 @app.get("/download/{filename}")
 async def download(filename: str):
     path = os.path.join("data", filename)
@@ -53,12 +127,6 @@ async def download(filename: str):
         return HTMLResponse("Not found", status_code=404)
     return FileResponse(path, filename=filename)
 
-@app.get("/video")
-async def get_video():
-    """Page vidéo synchronisée pour tous les sous-titreurs"""
-    with open("static/video.html", encoding="utf-8") as f:
-        return HTMLResponse(f.read())
-    
 # ─── WEBSOCKET ────────────────────────────────────────────────────────────
 
 @app.websocket("/ws")
@@ -88,7 +156,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 username = msg.get("username", "Anonyme")
                 user = scheduler.add_user(user_id, username)
                 connections[user_id] = websocket
-
                 await websocket.send_json({
                     "type": "welcome",
                     "user_id": user_id,
@@ -103,19 +170,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 session_id = f"sess_{int(time.time())}"
                 last_live_save.clear()
                 scheduler.set_config(
-                    slot_dur=int(msg.get("slot", 30)),
+                    slot_dur=int(msg.get("slot", 20)),
                     overlap=int(msg.get("overlap", 5)),
                     pools=int(msg.get("pools", 1)),
                     countdown=int(msg.get("countdown", 3)),
-                    listen=int(msg.get("listen", 8)),
                 )
-                # Countdown : start_time est dans le futur
                 scheduler.config.start_time = time.time() + scheduler.config.countdown
                 scheduler.config.is_active = True
                 scheduler.config.is_paused = False
                 scheduler.config.total_paused_time = 0.0
                 scheduler.config.paused_at = None
-
                 await broadcast_state("session_started")
 
             elif t == "admin_pause":
@@ -126,7 +190,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 await stop_and_export()
 
             elif t == "admin_assign":
-                # Réassigner un user à un pool/ordre
                 target_id = msg.get("user_id")
                 new_pool = int(msg.get("pool_id", 1))
                 new_order = int(msg.get("order", 0))
@@ -139,14 +202,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 if user and scheduler.config.is_active and not scheduler.config.is_paused:
                     state = scheduler.get_current_state(user_id)
                     if state.get("countdown", 0) > 0:
-                        continue  # Phase countdown : on ignore
+                        continue
                     if not state.get("is_my_turn"):
                         continue
                     slot_idx = state.get("my_slot_index", 0)
+                    corrected = correct_text(msg["text"], final=True)
                     new_caption = Caption(
                         user_id=user_id,
                         pool_id=user.pool_id,
-                        text=msg["text"],
+                        text=corrected,
                         timestamp=time.time(),
                         slot_index=slot_idx,
                     )
@@ -154,13 +218,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     await broadcast({
                         "type": "new_text",
                         "pool": user.pool_id,
-                        "text": msg["text"],
+                        "text": corrected,
                         "user": user.username,
                         "slot_index": slot_idx,
                     })
 
             elif t == "live_typing":
-                # Frappe en cours : broadcast aux viewers + sauvegarde en CSV (throttled)
                 user = scheduler.users.get(user_id)
                 if user and scheduler.config.is_active and not scheduler.config.is_paused:
                     state = scheduler.get_current_state(user_id)
@@ -169,8 +232,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     if state.get("is_my_turn"):
                         text = msg.get("text", "")
                         slot_idx = state.get("my_slot_index", 0)
-
-                        # Sauvegarde throttlée : 1 ligne CSV / seconde max pour ce (user, slot)
+                        corrected_live = correct_text(text, final=False)
                         if text.strip():
                             key = (user_id, slot_idx)
                             now_ts = time.time()
@@ -178,18 +240,16 @@ async def websocket_endpoint(websocket: WebSocket):
                                 save_caption_to_csv(session_id, Caption(
                                     user_id=user_id,
                                     pool_id=user.pool_id,
-                                    text=text,
+                                    text=corrected_live,
                                     timestamp=now_ts,
                                     slot_index=slot_idx,
                                 ))
                                 last_live_save[key] = now_ts
-
-                        # Broadcast aux viewers (et admin via la fonction utilitaire)
                         await broadcast_to_viewers({
                             "type": "live_typing",
                             "pool": user.pool_id,
                             "user": user.username,
-                            "text": text,
+                            "text": corrected_live,
                             "slot_index": slot_idx,
                         })
 
@@ -208,34 +268,41 @@ async def websocket_endpoint(websocket: WebSocket):
             await broadcast_user_list()
             await broadcast_state("sync_update")
 
-# ─── BACKGROUND: PUSH SYNC PERIODIQUEMENT ─────────────────────────────────
+# ─── BACKGROUND SYNC + KEEPALIVE (Ilyass) ─────────────────────────────────
 
 @app.on_event("startup")
 async def start_sync_loop():
     asyncio.create_task(sync_loop())
 
 async def sync_loop():
+    tick = 0
     while True:
         await asyncio.sleep(0.5)
-        if not scheduler.config.is_active:
-            continue
-
-        for uid, ws in list(connections.items()):
-            try:
-                await ws.send_json({
-                    "type": "sync_update",
-                    "state": scheduler.get_current_state(uid)
-                })
-            except Exception:
-                pass
-        for vid, ws in list(viewers.items()):
-            try:
-                await ws.send_json({
-                    "type": "sync_update",
-                    "state": scheduler.get_current_state()
-                })
-            except Exception:
-                pass
+        tick += 1
+        if scheduler.config.is_active:
+            for uid, ws in list(connections.items()):
+                try:
+                    await ws.send_json({
+                        "type": "sync_update",
+                        "state": scheduler.get_current_state(uid)
+                    })
+                except Exception:
+                    pass
+            for vid, ws in list(viewers.items()):
+                try:
+                    await ws.send_json({
+                        "type": "sync_update",
+                        "state": scheduler.get_current_state()
+                    })
+                except Exception:
+                    pass
+        elif tick % 60 == 0:
+            # Keepalive toutes les 30s quand inactif
+            for ws in list(connections.values()) + list(viewers.values()):
+                try:
+                    await ws.send_json({"type": "ping"})
+                except Exception:
+                    pass
 
 async def stop_and_export():
     if not scheduler.config.is_active:
@@ -294,7 +361,6 @@ async def broadcast_to_viewers(data: dict):
             await ws.send_json(data)
         except Exception:
             pass
-    # Aussi l'admin
     admin_ws = connections.get("admin_master")
     if admin_ws:
         try:

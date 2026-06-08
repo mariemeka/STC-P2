@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -20,6 +19,8 @@
   @keyframes blink { 50% { opacity: 0.3; } }
   .flash { animation: flash 0.6s ease-out; }
   @keyframes flash { 0% { background: #b6e3b8; } 100% { background: transparent; } }
+
+  /* Overlay countdown */
   #countdown-overlay {
     display: none;
     position: fixed; inset: 0; background: rgba(0,0,0,0.85);
@@ -29,7 +30,6 @@
   #countdown-overlay.visible { display: flex; }
   #countdown-number { font-size: 12rem; font-weight: bold; color: #ff6b6b; }
   #countdown-label { font-size: 1.5rem; margin-top: 20px; }
- 
 </style>
 </head>
 <body>
@@ -40,10 +40,9 @@
 </div>
 
 <div id="login">
-  <h2>STC — Sous-titreur</h2>
-  
+  <h2>STC - Sous-titreur</h2>
   <div class="row">
-    <label>Votre nom : <input type="text" id="username-input" placeholder="ex: Marie"></label>
+    <label>Nom : <input type="text" id="username-input"></label>
     <button onclick="connect()">Se connecter</button>
   </div>
 </div>
@@ -66,7 +65,8 @@
     <span style="margin-left:15px">Lignes : <span id="line-count">0</span></span>
   </div>
   <div class="row" style="font-size:0.85rem;color:#666">
-    <strong>Entrée</strong> = valider une phrase. Auto-envoi automatique en fin de slot.
+    Tu vois ce que tu tapes en direct dans le viewer (pas besoin d'Entrée).
+    Entrée = valider et passer à la ligne suivante. Auto-envoi en fin de slot.
   </div>
 </div>
 
@@ -110,12 +110,17 @@ function connect() {
   username = document.getElementById('username-input').value.trim();
   if (!username) { alert("Nom requis"); return; }
   localStorage.setItem('stc_username', username);
-  ws = new WebSocket(`ws://${location.host}/ws`);
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+
   ws.onopen = () => {
     ws.send(JSON.stringify({ type: "join", user_id: userId, username: username }));
   };
+
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
+
     if (msg.type === "welcome") {
       userId = msg.user_id;
       sessionStorage.setItem('stc_user_id', userId);
@@ -125,21 +130,29 @@ function connect() {
       document.getElementById('pool-display').innerText = `Pool ${msg.pool_id} (ordre ${msg.order_in_pool})`;
       applyState(msg.state);
     }
+
     if (msg.type === "session_started" || msg.type === "sync_update" || msg.type === "session_paused") {
       applyState(msg.state);
     }
+
     if (msg.type === "session_ended") {
-      active = false; isMyTurn = false;
-      flushIfNeeded(); stopCountdown(); hideCountdownOverlay(); updateUI();
+      active = false;
+      isMyTurn = false;
+      flushIfNeeded();
+      stopCountdown();
+      hideCountdownOverlay();
+      updateUI();
       document.getElementById('status-display').innerText = "Session terminée";
       if (msg.files && msg.files.length) {
         alert("Session terminée. Fichiers exportés :\n" + msg.files.join("\n"));
       }
     }
   };
+
   ws.onclose = () => {
     document.getElementById('status-display').innerText = "Déconnecté";
-    stopCountdown(); hideCountdownOverlay();
+    stopCountdown();
+    hideCountdownOverlay();
   };
 }
 
@@ -151,62 +164,87 @@ function applyState(state) {
   currentSlot = (state.my_slot_index != null) ? state.my_slot_index : (state.slot_index || 0);
   document.getElementById('slot-display').innerText = currentSlot;
   endsAt = Date.now() + (state.time_left ?? 0) * 1000;
+
+  // Countdown phase
   const cd = state.countdown || 0;
   if (active && cd > 0) {
-    countdownActive = true; showCountdownOverlay(cd); updateUI(); return;
+    countdownActive = true;
+    showCountdownOverlay(cd);
+    updateUI();
+    return;
   } else if (countdownActive) {
-    countdownActive = false; hideCountdownOverlay();
+    // Sortie du countdown
+    countdownActive = false;
+    hideCountdownOverlay();
   }
-  if (prevIsMyTurn && !isMyTurn) flushIfNeeded();
+
+  // Transition tour fini → auto-flush
+  if (prevIsMyTurn && !isMyTurn) {
+    flushIfNeeded();
+  }
+  // Transition tour commence → alerte
   if (!prevIsMyTurn && isMyTurn && active && !paused) {
     document.body.classList.remove('flash'); void document.body.offsetWidth;
     document.body.classList.add('flash');
-    beep(880, 150); setTimeout(() => beep(1100, 120), 180);
+    beep(880, 150);
+    setTimeout(() => beep(1100, 120), 180);
   }
-  updateUI(); startCountdown();
+
+  updateUI();
+  startCountdown();
 }
 
 function showCountdownOverlay(seconds) {
   document.getElementById('countdown-number').innerText = seconds;
   document.getElementById('countdown-overlay').classList.add('visible');
 }
+
 function hideCountdownOverlay() {
   document.getElementById('countdown-overlay').classList.remove('visible');
 }
+
 function startCountdown() {
   if (countdownTimer) return;
   countdownTimer = setInterval(() => {
     const remaining = Math.max(0, (endsAt - Date.now()) / 1000);
     const timerEl = document.getElementById('timer');
     timerEl.innerText = remaining.toFixed(1);
+
     if (isMyTurn && remaining < 3) timerEl.classList.add('warn');
     else timerEl.classList.remove('warn');
+
     if (isMyTurn && remaining < 0.4) flushIfNeeded();
   }, 100);
 }
+
 function stopCountdown() {
   if (countdownTimer) clearInterval(countdownTimer);
   countdownTimer = null;
 }
+
 function updateUI() {
   const area = document.getElementById('text-input');
   const btn = document.getElementById('send-btn');
   const status = document.getElementById('status-display');
+
   if (!active) {
     area.disabled = true; btn.disabled = true;
-    status.innerText = "Inactif"; status.className = "badge turn-off"; return;
+    status.innerText = "Inactif"; status.className = "badge turn-off";
+    return;
   }
   if (countdownActive) {
     area.disabled = true; btn.disabled = true;
-    status.innerText = "Démarrage..."; status.className = "badge turn-off"; return;
+    status.innerText = "Démarrage..."; status.className = "badge turn-off";
+    return;
   }
   if (paused) {
     area.disabled = true; btn.disabled = true;
-    status.innerText = "En pause"; status.className = "badge turn-off"; return;
+    status.innerText = "En pause"; status.className = "badge turn-off";
+    return;
   }
   if (isMyTurn) {
     area.disabled = false; btn.disabled = false;
-    area.placeholder = "À vous ! Tapez ce que vous entendez...";
+    area.placeholder = "À vous ! Entrée pour valider une phrase.";
     status.innerText = "C'EST VOTRE TOUR"; status.className = "badge turn-on";
     area.focus();
   } else {
@@ -215,30 +253,44 @@ function updateUI() {
     status.innerText = "En attente"; status.className = "badge turn-off";
   }
 }
+
 function sendCaption() {
   const area = document.getElementById('text-input');
   const val = area.value.trim();
   if (!val || !isMyTurn) return;
   ws.send(JSON.stringify({ type: "caption", text: val }));
-  totalChars += val.length; totalLines += 1;
+  totalChars += val.length;
+  totalLines += 1;
   document.getElementById('char-count').innerText = totalChars;
   document.getElementById('line-count').innerText = totalLines;
-  area.value = ""; lastSentLiveText = "";
+  area.value = "";
+  lastSentLiveText = "";
 }
+
 function flushIfNeeded() {
   if (lastAutoFlushSlot === currentSlot) return;
   const area = document.getElementById('text-input');
   const val = area.value.trim();
-  if (!val || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!val) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "caption", text: val }));
-  totalChars += val.length; totalLines += 1;
+  totalChars += val.length;
+  totalLines += 1;
   document.getElementById('char-count').innerText = totalChars;
   document.getElementById('line-count').innerText = totalLines;
-  area.value = ""; lastAutoFlushSlot = currentSlot; lastSentLiveText = "";
+  area.value = "";
+  lastAutoFlushSlot = currentSlot;
+  lastSentLiveText = "";
 }
+
 document.getElementById('text-input').addEventListener('keydown', (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendCaption(); }
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendCaption();
+  }
 });
+
+// Live typing : envoi débounce à chaque modif
 let typingTimer = null;
 document.getElementById('text-input').addEventListener('input', (e) => {
   if (!isMyTurn || !active || paused || countdownActive) return;
@@ -252,8 +304,11 @@ document.getElementById('text-input').addEventListener('input', (e) => {
     }
   }, 150);
 });
+
 setInterval(() => {
-  if (lastAutoFlushSlot !== -1 && lastAutoFlushSlot !== currentSlot) lastAutoFlushSlot = -1;
+  if (lastAutoFlushSlot !== -1 && lastAutoFlushSlot !== currentSlot) {
+    lastAutoFlushSlot = -1;
+  }
 }, 200);
 </script>
 </body>

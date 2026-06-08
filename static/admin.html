@@ -41,7 +41,10 @@
       <source src="/static/media/video.mp4" type="video/mp4">
       Votre navigateur ne supporte pas l'audio.
   </audio>
- 
+  <div class="help" style="margin-top:8px;">
+    L'audio se lance automatiquement quand vous cliquez sur <strong>Démarrer</strong> (après le countdown).<br>
+    ⚠️ Assurez-vous que les enceintes de la salle sont activées avant de démarrer.
+  </div>
 </fieldset>
 
 <!-- ── PARAMÈTRES ───────────────────────────────────────────────────────── -->
@@ -50,10 +53,9 @@
   <div class="grid">
     <label>Slot (s) :</label><input type="number" id="slot" value="20" min="5">
     <label>Overlap (s) :</label><input type="number" id="overlap" value="5" min="0">
-    <label>Écoute (s) :</label><input type="number" id="listen" value="8" min="0">  <!-- ← nouveau -->
     <label>Pools :</label><input type="number" id="pools" value="1" min="1">
     <label>Countdown (s) :</label><input type="number" id="countdown" value="3" min="0">
-</div>
+  </div>
   <div class="help">La session tourne tant que vous ne cliquez pas sur Arrêter (live). Countdown 0 = démarrage immédiat.</div>
   <div style="margin-top:12px">
     <button onclick="send('admin_start')">▶ Démarrer</button>
@@ -76,9 +78,12 @@
   <div class="help">Position 0 = premier à prendre la main, 1 = deuxième, etc.</div>
 </fieldset>
 
-<!-- ── FLUX TEMPS RÉEL ──────────────────────────────────────────────────── -->
+<!-- ── FLUX TEMPS RÉEL (Ilyass) ────────────────────────────────────────── -->
 <fieldset>
   <legend>Flux temps réel</legend>
+  <div id="live-area" style="min-height:1.6rem;padding:4px 8px;background:#f0f4ff;border:1px solid #c8d4f0;margin-bottom:6px;font-size:0.9rem;color:#555">
+    <em>Aucune frappe en cours.</em>
+  </div>
   <div id="log">En attente...</div>
 </fieldset>
 
@@ -89,15 +94,19 @@
 </fieldset>
 
 <script>
-const ws = new WebSocket(`ws://${location.host}/ws`);
+// Fix WebSocket wss (Ilyass) : supporte http et https
+const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+const ws = new WebSocket(`${proto}://${location.host}/ws`);
 const logDiv = document.getElementById('log');
 const userTbody = document.querySelector('#user-table tbody');
 const stateDisplay = document.getElementById('state-display');
 const filesDiv = document.getElementById('files');
 const audioPlayer = document.getElementById('audio-player');
 const audioStatus = document.getElementById('audio-status');
+const liveArea = document.getElementById('live-area');
 let currentUsers = [];
 let numPools = 1;
+let liveTypers = {};  // { username: { pool, text } }
 
 ws.onopen = () => {
   addLog("Connecté.");
@@ -107,6 +116,11 @@ ws.onopen = () => {
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
 
+  if (data.type === "welcome") {
+    const s = data.state;
+    if (s) updateStateDisplay(s);
+  }
+
   if (data.type === "user_update") {
     currentUsers = data.users.filter(u => u.id !== 'admin_master');
     renderUsers();
@@ -115,30 +129,33 @@ ws.onmessage = (event) => {
   if (data.type === "sync_update" || data.type === "session_started" || data.type === "session_paused") {
     const s = data.state;
     numPools = (s.config && s.config.num_pools) || numPools;
-    if (!s.active) {
-      stateDisplay.innerText = "inactif";
-      stateDisplay.className = "state-stopped";
-    } else if (s.countdown && s.countdown > 0) {
-      stateDisplay.innerText = `COUNTDOWN ${s.countdown}`;
-      stateDisplay.className = "state-countdown";
-    } else if (s.paused) {
-      stateDisplay.innerText = "EN PAUSE";
-      stateDisplay.className = "state-paused";
-    } else {
-      stateDisplay.innerText = `actif — slot ${s.slot_index} — ${s.time_left}s restantes`;
-      stateDisplay.className = "state-running";
-    }
+    updateStateDisplay(s);
     renderUsers();
   }
 
   if (data.type === "new_text") {
     addLog(`[P${data.pool} | slot ${data.slot_index}] ${data.user} : ${escapeHtml(data.text)}`);
+    // Nettoyer le live typing de cet utilisateur quand il valide
+    delete liveTypers[data.user];
+    renderLiveTyping();
+  }
+
+  // Live typing visible dans l'admin (Ilyass)
+  if (data.type === "live_typing") {
+    if (data.text && data.text.trim()) {
+      liveTypers[data.user] = { pool: data.pool, text: data.text.trim() };
+    } else {
+      delete liveTypers[data.user];
+    }
+    renderLiveTyping();
   }
 
   if (data.type === "session_ended") {
     addLog("SESSION TERMINÉE.");
     stateDisplay.innerText = "terminée";
     stateDisplay.className = "state-stopped";
+    liveTypers = {};
+    renderLiveTyping();
     if (data.files && data.files.length) {
       filesDiv.innerHTML = data.files.map(f =>
         `<a href="/download/${encodeURIComponent(f)}" target="_blank">${f}</a>`
@@ -147,57 +164,63 @@ ws.onmessage = (event) => {
   }
 };
 
-// ── Contrôle audio synchronisé avec la session ─────────────────────────────
+function updateStateDisplay(s) {
+  if (!s.active) {
+    stateDisplay.innerText = "inactif";
+    stateDisplay.className = "state-stopped";
+  } else if (s.countdown && s.countdown > 0) {
+    stateDisplay.innerText = `COUNTDOWN ${s.countdown}`;
+    stateDisplay.className = "state-countdown";
+  } else if (s.paused) {
+    stateDisplay.innerText = "EN PAUSE";
+    stateDisplay.className = "state-paused";
+  } else {
+    stateDisplay.innerText = `actif — slot ${s.slot_index} — ${s.time_left}s restantes`;
+    stateDisplay.className = "state-running";
+  }
+}
 
+function renderLiveTyping() {
+  const entries = Object.entries(liveTypers);
+  if (!entries.length) {
+    liveArea.innerHTML = '<em>Aucune frappe en cours.</em>';
+    return;
+  }
+  liveArea.innerHTML = entries.map(([user, d]) =>
+    `<span style="color:#1a73e8;font-weight:bold">${escapeHtml(user)}</span> [P${d.pool}] : <span style="color:#333">${escapeHtml(d.text)}</span>▌`
+  ).join('<br>');
+}
+
+// ── Contrôle audio synchronisé (toi) ──────────────────────────────────────
 function send(type) {
   const payload = {
     type,
     slot: document.getElementById('slot').value,
     overlap: document.getElementById('overlap').value,
-    listen: document.getElementById('listen').value,
     pools: document.getElementById('pools').value,
     countdown: document.getElementById('countdown').value,
   };
   ws.send(JSON.stringify(payload));
   addLog(`> ${type}`);
 
-  // Lancer l'audio automatiquement au démarrage
-// Lancer l'audio automatiquement au démarrage
-if (type === 'admin_start') {
+  if (type === 'admin_start') {
     const countdown = parseInt(document.getElementById('countdown').value) || 0;
     audioPlayer.currentTime = 0;
-    
     if (countdown > 0) {
-        // Attendre la fin du countdown avant de lancer l'audio
-        audioStatus.textContent = `⏳ Audio démarre dans ${countdown}s...`;
-        audioStatus.style.color = "#b87000";
-        setTimeout(() => {
-            audioPlayer.play()
-                .then(() => {
-                    audioStatus.textContent = "🔊 Audio en cours";
-                    audioStatus.style.color = "#2c7a2c";
-                })
-                .catch(() => {
-                    audioStatus.textContent = "⚠️ Cliquez Play sur le player pour lancer l'audio";
-                    audioStatus.style.color = "#d63f00";
-                    addLog("⚠️ Autoplay bloqué — cliquez manuellement sur Play dans le player audio.");
-                });
-        }, countdown * 1000); // attendre countdown secondes
-    } else {
+      audioStatus.textContent = `⏳ Audio démarre dans ${countdown}s...`;
+      audioStatus.style.color = "#b87000";
+      setTimeout(() => {
         audioPlayer.play()
-            .then(() => {
-                audioStatus.textContent = "🔊 Audio en cours";
-                audioStatus.style.color = "#2c7a2c";
-            })
-            .catch(() => {
-                audioStatus.textContent = "⚠️ Cliquez Play sur le player pour lancer l'audio";
-                audioStatus.style.color = "#d63f00";
-                addLog("⚠️ Autoplay bloqué — cliquez manuellement sur Play dans le player audio.");
-            });
+          .then(() => { audioStatus.textContent = "🔊 Audio en cours"; audioStatus.style.color = "#2c7a2c"; })
+          .catch(() => { audioStatus.textContent = "⚠️ Cliquez Play sur le player"; audioStatus.style.color = "#d63f00"; addLog("⚠️ Autoplay bloqué — cliquez Play manuellement."); });
+      }, countdown * 1000);
+    } else {
+      audioPlayer.play()
+        .then(() => { audioStatus.textContent = "🔊 Audio en cours"; audioStatus.style.color = "#2c7a2c"; })
+        .catch(() => { audioStatus.textContent = "⚠️ Cliquez Play sur le player"; audioStatus.style.color = "#d63f00"; addLog("⚠️ Autoplay bloqué — cliquez Play manuellement."); });
     }
-}
+  }
 
-  // Pause/reprise audio synchronisée
   if (type === 'admin_pause') {
     if (audioPlayer.paused) {
       audioPlayer.play();
@@ -210,7 +233,6 @@ if (type === 'admin_start') {
     }
   }
 
-  // Arrêt audio
   if (type === 'admin_stop') {
     audioPlayer.pause();
     audioPlayer.currentTime = 0;
@@ -218,8 +240,6 @@ if (type === 'admin_start') {
     audioStatus.style.color = "#888";
   }
 }
-
-// ── Rendu tableau utilisateurs ─────────────────────────────────────────────
 
 function renderUsers() {
   if (!currentUsers.length) {
