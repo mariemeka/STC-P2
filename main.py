@@ -21,39 +21,40 @@ app = FastAPI()
 if not os.path.exists("data"):
     os.makedirs("data")
 
+# ── Correction orthographique ─────────────────────────────────────────────
+
 def _strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
 
 _sym = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
-_sym.load_dictionary("fr-100k.txt", term_index=0, count_index=1, encoding="utf-8")
+_dict_loaded = False
+if os.path.exists("fr-100k.txt"):
+    _sym.load_dictionary("fr-100k.txt", term_index=0, count_index=1, encoding="utf-8")
+    _dict_loaded = True
 
-# Mapping mot-sans-accent → mot-accentué (ex: "regler" → "régler")
-_accent_map: dict[str, str] = {}
-for entry in _sym.words.keys():
-    stripped = _strip_accents(entry)
-    if stripped != entry and stripped not in _accent_map:
-        _accent_map[stripped] = entry
+_accent_map: dict = {}
+if _dict_loaded:
+    for entry in _sym.words.keys():
+        stripped = _strip_accents(entry)
+        if stripped != entry and stripped not in _accent_map:
+            _accent_map[stripped] = entry
 
 def correct_text(text: str, final: bool = False) -> str:
-    # Normalise les apostrophes typographiques → standard
-    text = text.replace("’", "'").replace("ʼ", "'")
+    if not _dict_loaded:
+        return text
+    text = text.replace("\u2019", "'").replace("\u02bc", "'")
     words = text.split(" ")
     trailing_space = text.endswith(" ")
-    # final=True (envoi) → on corrige tous les mots
-    # final=False (live) → on laisse le dernier mot (peut être incomplet)
     complete = words if (trailing_space or final) else words[:-1]
     last = [] if (trailing_space or final) else [words[-1]]
-
     corrected = []
     for word in complete:
         if not word:
             corrected.append(word)
             continue
         w_lower = word.lower()
-        # Mots avec apostrophe → on corrige chaque partie séparément
         if "'" in w_lower:
             sep = "'"
-            # Si le mot complet existe dans le dico (ex: aujourd’hui) → on garde
             if _sym.lookup(w_lower, Verbosity.TOP, max_edit_distance=0):
                 corrected.append(word)
                 continue
@@ -71,16 +72,13 @@ def correct_text(text: str, final: bool = False) -> str:
                     fixed_parts.append(sugg[0].term if sugg else part)
             corrected.append(sep.join(fixed_parts))
             continue
-        # 1. Mot déjà correct dans le dico → on garde
         if _sym.lookup(w_lower, Verbosity.TOP, max_edit_distance=0):
             corrected.append(word)
             continue
-        # 2. Mot sans accent qui correspond à un mot accentué → on restaure l'accent
         if w_lower in _accent_map:
             fix = _accent_map[w_lower]
             corrected.append(fix.capitalize() if word[0].isupper() else fix)
             continue
-        # 3. Vraie faute d'orthographe → correction symspell
         suggestions = _sym.lookup(w_lower, Verbosity.CLOSEST, max_edit_distance=2)
         if suggestions:
             fix = suggestions[0].term
@@ -89,13 +87,14 @@ def correct_text(text: str, final: bool = False) -> str:
             corrected.append(word)
     return " ".join(corrected + last) + (" " if trailing_space else "")
 
+# ─────────────────────────────────────────────────────────────────────────
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 scheduler = Scheduler()
 connections: Dict[str, WebSocket] = {}
 viewers: Dict[str, WebSocket] = {}
 session_id = "live_session"
-# Pour throttler les sauvegardes live (1 par seconde max par user/slot)
 last_live_save: Dict[tuple, float] = {}
 LIVE_SAVE_THROTTLE = 1.0
 
@@ -114,6 +113,11 @@ async def get_admin():
 @app.get("/viewer")
 async def get_viewer():
     with open("static/viewer.html", encoding="utf-8") as f:
+        return HTMLResponse(f.read())
+
+@app.get("/results")
+async def get_results():
+    with open("static/results.html", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
 @app.get("/download/{filename}")
@@ -152,7 +156,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 username = msg.get("username", "Anonyme")
                 user = scheduler.add_user(user_id, username)
                 connections[user_id] = websocket
-
                 await websocket.send_json({
                     "type": "welcome",
                     "user_id": user_id,
@@ -167,18 +170,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 session_id = f"sess_{int(time.time())}"
                 last_live_save.clear()
                 scheduler.set_config(
-                    slot_dur=int(msg.get("slot", 30)),
+                    slot_dur=int(msg.get("slot", 20)),
                     overlap=int(msg.get("overlap", 5)),
                     pools=int(msg.get("pools", 1)),
                     countdown=int(msg.get("countdown", 3)),
                 )
-                # Countdown : start_time est dans le futur
                 scheduler.config.start_time = time.time() + scheduler.config.countdown
                 scheduler.config.is_active = True
                 scheduler.config.is_paused = False
                 scheduler.config.total_paused_time = 0.0
                 scheduler.config.paused_at = None
-
                 await broadcast_state("session_started")
 
             elif t == "admin_pause":
@@ -189,7 +190,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 await stop_and_export()
 
             elif t == "admin_assign":
-                # Réassigner un user à un pool/ordre
                 target_id = msg.get("user_id")
                 new_pool = int(msg.get("pool_id", 1))
                 new_order = int(msg.get("order", 0))
@@ -202,7 +202,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if user and scheduler.config.is_active and not scheduler.config.is_paused:
                     state = scheduler.get_current_state(user_id)
                     if state.get("countdown", 0) > 0:
-                        continue  # Phase countdown : on ignore
+                        continue
                     if not state.get("is_my_turn"):
                         continue
                     slot_idx = state.get("my_slot_index", 0)
@@ -224,7 +224,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
 
             elif t == "live_typing":
-                # Frappe en cours : broadcast aux viewers + sauvegarde en CSV (throttled)
                 user = scheduler.users.get(user_id)
                 if user and scheduler.config.is_active and not scheduler.config.is_paused:
                     state = scheduler.get_current_state(user_id)
@@ -235,7 +234,17 @@ async def websocket_endpoint(websocket: WebSocket):
                         slot_idx = state.get("my_slot_index", 0)
                         corrected_live = correct_text(text, final=False)
 
-                        # Sauvegarde throttlée : 1 ligne CSV / seconde max pour ce (user, slot)
+                        # ── Mesure vitesse de frappe + adaptation ─────────
+                        nb_mots = len(text.split()) if text.strip() else 0
+                        elapsed = state.get("elapsed", 1)
+                        cycle_time = max(1, scheduler.config.slot_duration - scheduler.config.overlap_duration)
+                        temps_dans_slot = elapsed % cycle_time
+                        if temps_dans_slot > 0 and nb_mots > 0:
+                            vitesse = round(nb_mots / temps_dans_slot, 2)
+                            scheduler.update_typing_speed(user_id, vitesse)
+                            await broadcast_user_list()  # mise à jour admin
+                        # ─────────────────────────────────────────────────
+
                         if text.strip():
                             key = (user_id, slot_idx)
                             now_ts = time.time()
@@ -249,7 +258,6 @@ async def websocket_endpoint(websocket: WebSocket):
                                 ))
                                 last_live_save[key] = now_ts
 
-                        # Broadcast aux viewers (et admin via la fonction utilitaire)
                         await broadcast_to_viewers({
                             "type": "live_typing",
                             "pool": user.pool_id,
@@ -273,7 +281,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await broadcast_user_list()
             await broadcast_state("sync_update")
 
-# ─── BACKGROUND: PUSH SYNC PERIODIQUEMENT ─────────────────────────────────
+# ─── BACKGROUND SYNC + KEEPALIVE ──────────────────────────────────────────
 
 @app.on_event("startup")
 async def start_sync_loop():
@@ -284,7 +292,6 @@ async def sync_loop():
     while True:
         await asyncio.sleep(0.5)
         tick += 1
-
         if scheduler.config.is_active:
             for uid, ws in list(connections.items()):
                 try:
@@ -303,13 +310,11 @@ async def sync_loop():
                 except Exception:
                     pass
         elif tick % 60 == 0:
-            # Keepalive toutes les 30 s quand inactif (Fly.io ferme les WS idle à 60 s)
             for ws in list(connections.values()) + list(viewers.values()):
                 try:
                     await ws.send_json({"type": "ping"})
                 except Exception:
                     pass
-
 async def stop_and_export():
     if not scheduler.config.is_active:
         return
@@ -317,6 +322,18 @@ async def stop_and_export():
     pool_files = fuse_session(session_id, scheduler.config.num_pools)
     exports = []
     for pool_id, captions in pool_files.items():
+
+        # ── Correction post-fusion sur le texte final complet ─────────
+        texte_complet = " ".join(c["text"] for c in captions if c["text"].strip())
+        texte_corrige = correct_text(texte_complet, final=True)
+        mots = texte_corrige.split()
+        mots_par_slot = max(1, len(mots) // len(captions)) if captions else len(mots)
+        for i, caption in enumerate(captions):
+            debut = i * mots_par_slot
+            fin = debut + mots_par_slot if i < len(captions) - 1 else len(mots)
+            caption["text"] = " ".join(mots[debut:fin])
+        # ─────────────────────────────────────────────────────────────
+
         srt_path = os.path.join("data", f"{session_id}_pool_{pool_id}.srt")
         txt_path = os.path.join("data", f"{session_id}_pool_{pool_id}.txt")
         with open(srt_path, "w", encoding="utf-8") as f:
@@ -331,7 +348,14 @@ async def stop_and_export():
 
 async def broadcast_user_list():
     user_list = [
-        {"id": u.user_id, "name": u.username, "pool": u.pool_id, "order": u.order_in_pool}
+        {
+            "id": u.user_id,
+            "name": u.username,
+            "pool": u.pool_id,
+            "order": u.order_in_pool,
+            "speed": u.typing_speed,
+            "personal_slot": u.slot_duration_personal or 0,
+        }
         for u in scheduler.users.values()
     ]
     await broadcast({"type": "user_update", "users": user_list})
@@ -367,7 +391,6 @@ async def broadcast_to_viewers(data: dict):
             await ws.send_json(data)
         except Exception:
             pass
-    # Aussi l'admin
     admin_ws = connections.get("admin_master")
     if admin_ws:
         try:

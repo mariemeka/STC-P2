@@ -4,10 +4,10 @@ from pydantic import BaseModel
 
 
 class SessionConfig(BaseModel):
-    slot_duration: int = 30
+    slot_duration: int = 20
     overlap_duration: int = 5
     num_pools: int = 1
-    countdown: int = 3       # secondes avant le slot 0
+    countdown: int = 3
     start_time: Optional[float] = None
     paused_at: Optional[float] = None
     total_paused_time: float = 0.0
@@ -20,6 +20,8 @@ class User(BaseModel):
     username: str
     pool_id: int
     order_in_pool: int
+    typing_speed: float = 0.0       # mots/seconde mesuré en temps réel
+    slot_duration_personal: int = 0  # 0 = utiliser la valeur globale
 
 
 ADMIN_ID = "admin_master"
@@ -78,7 +80,6 @@ class Scheduler:
         old_pool = user.pool_id
         new_pool = max(1, min(new_pool, self.config.num_pools))
 
-        # Réindexer l'ancien pool (l'user le quitte)
         if old_pool != new_pool:
             old_users = sorted(
                 [u for u in self._subtitlers() if u.pool_id == old_pool and u.user_id != user_id],
@@ -87,7 +88,6 @@ class Scheduler:
             for i, u in enumerate(old_users):
                 u.order_in_pool = i
 
-        # Insérer dans le nouveau pool à la position demandée
         new_pool_users = sorted(
             [u for u in self._subtitlers() if u.pool_id == new_pool and u.user_id != user_id],
             key=lambda u: u.order_in_pool,
@@ -97,6 +97,28 @@ class Scheduler:
         new_pool_users.insert(new_order, user)
         for i, u in enumerate(new_pool_users):
             u.order_in_pool = i
+
+    # ── Adaptation dynamique ───────────────────────────────────────────────
+    def update_typing_speed(self, user_id: str, words_per_second: float):
+        """
+        Met à jour la vitesse de frappe et adapte le slot personnel.
+        - Rapide (>= 1.5 mots/s) : slot allongé de 5s
+        - Lent   (<= 0.8 mots/s) : slot raccourci de 5s
+        - Normal                 : slot standard
+        """
+        user = self.users.get(user_id)
+        if not user or user.user_id == ADMIN_ID:
+            return
+
+        user.typing_speed = round(words_per_second, 2)
+        base = self.config.slot_duration
+
+        if words_per_second >= 1.5:
+            user.slot_duration_personal = min(base + 5, 40)
+        elif words_per_second <= 0.8:
+            user.slot_duration_personal = max(base - 5, 10)
+        else:
+            user.slot_duration_personal = base
 
     # ── Pause ─────────────────────────────────────────────────────────────
     def toggle_pause(self):
@@ -128,7 +150,6 @@ class Scheduler:
         now = self.config.paused_at if self.config.is_paused else time.time()
         elapsed_raw = now - self.config.start_time - self.config.total_paused_time
 
-        # Phase de countdown : start_time est dans le futur
         if elapsed_raw < 0:
             return {
                 "active": True,
@@ -153,9 +174,16 @@ class Scheduler:
         is_my_turn = False
         my_slot_index = global_slot_index
         my_time_left = time_left
+        personal_slot = slot_dur
+        typing_speed = 0.0
 
         if user_id and user_id in self.users and user_id != ADMIN_ID:
             user = self.users[user_id]
+            typing_speed = user.typing_speed
+
+            # Slot adapté à la vitesse du sous-titreur
+            personal_slot = user.slot_duration_personal or slot_dur
+
             pool_users = [u for u in self._subtitlers() if u.pool_id == user.pool_id]
             n = len(pool_users)
             if n > 0:
@@ -171,7 +199,7 @@ class Scheduler:
                     my_time_left = round(max(0.0, overlap - e_in_cycle), 1)
                 elif main:
                     my_slot_index = global_slot_index
-                    my_time_left = time_left
+                    my_time_left = round(max(0.0, personal_slot - e_in_cycle), 1)
 
         return {
             "active": self.config.is_active,
@@ -182,5 +210,7 @@ class Scheduler:
             "my_slot_index": my_slot_index,
             "countdown": 0,
             "elapsed": round(elapsed, 1),
+            "typing_speed": typing_speed,
+            "personal_slot": personal_slot,
             "config": self.config.model_dump(),
         }

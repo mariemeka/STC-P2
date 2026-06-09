@@ -1,0 +1,62 @@
+[
+  {
+    "config": "slot=20s | overlap=3s",
+    "slot_duration": 20,
+    "overlap": 3,
+    "nb_sous_titreurs": 2,
+    "couverture": 89.7,
+    "doublons": 0.0,
+    "mots_manques": 4,
+    "mots_total": 44,
+    "duree": 0,
+    "texte_fusionne": "Le sous-titrage à plusieurs de travailler ensemble en tepms réel pour produire des cohérents et complets à d'un direct chaque sous-titreur prend une portion du le fusionne automatiquement toutes contributions permet plusieurs travailler ensemble en temps réel produire sous-titres cohérents et à partir d'un flux audio chaque sous-titreur charge portion et le système fusionne toutes contributions"
+  },
+  {
+    "config": "slot=20s | overlap=5s",
+    "slot_duration": 20,
+    "overlap": 5,
+    "nb_sous_titreurs": 2,
+    "couverture": 89.7,
+    "doublons": 0.0,
+    "mots_manques": 4,
+    "mots_total": 44,
+    "duree": 0,
+    "texte_fusionne": "Le sous-titrage à plusieurs de travailler ensemble en tepms réel pour produire des cohérents et complets à d'un direct chaque sous-titreur prend une portion du le fusionne automatiquement toutes contributions colalboratif peremt à plusieurs participants de ensemble en temsp réel pour produire des sous-titres cohérents et complest à partir d'un flux audio en chaque sous-titreur en uen portion du discours système fusionne automatiquement les contributions"
+  },
+  {
+    "config": "slot=20s | overlap=5s",
+    "slot_duration": 20,
+    "overlap": 5,
+    "nb_sous_titreurs": 4,
+    "couverture": 97.4,
+    "doublons": 0.0,
+    "mots_manques": 1,
+    "mots_total": 44,
+    "duree": 0,
+    "texte_fusionne": "sous-titrage collaboratif permet à plusieurs de ensemble en temsp réel pour produire des et complets à partir d'un flux audio direct chaque sous-titreur en charge une et le fusionne automatiquement les contributions Le sous-titrage permet plusieurs participants de travailler temps réel pour produier des cohérents et à partir en prend en charge une portion du discours et fusionne automatiquement toutes les contributions Le sous-titrage permet plusieurs participants temps réel pour produire des et complets à partir sous-titreur en charge une portion du discours et fusionne automatiquement touets les Le sous-titrage permet plusieurs participants de ensemble en temps réel produrie sous-titres comlpets partir d'un flux audio chaque prend charge une portion du discours fusionne automatiquement toutes les contribtuions"
+  },
+  {
+    "config": "slot=15s | overlap=3s",
+    "slot_duration": 15,
+    "overlap": 3,
+    "nb_sous_titreurs": 2,
+    "couverture": 89.7,
+    "doublons": 0.0,
+    "mots_manques": 4,
+    "mots_total": 44,
+    "duree": 0,
+    "texte_fusionne": "Le sous-titrage à plusieurs de travailler ensemble en tepms réel pour produire des cohérents et complets à d'un direct chaque sous-titreur prend une portion du le fusionne automatiquement toutes contributions colalboratif peremt à plusieurs participants de ensemble en temsp réel pour produire des sous-titres cohérents et complest à partir d'un flux audio en chaque sous-titreur en uen portion du discours système fusionne automatiquement les contributions"
+  },
+  {
+    "config": "slot=15s | overlap=5s",
+    "slot_duration": 15,
+    "overlap": 5,
+    "nb_sous_titreurs": 4,
+    "couverture": 97.4,
+    "doublons": 0.0,
+    "mots_manques": 1,
+    "mots_total": 44,
+    "duree": 0,
+    "texte_fusionne": "sous-titrage collaboratif permet à plusieurs de ensemble en temsp réel pour produire des et complets à partir d'un flux audio direct chaque sous-titreur en charge une et le fusionne automatiquement les contributions Le sous-titrage permet plusieurs participants de travailler temps réel pour produier des cohérents et à partir en prend en charge une portion du discours et fusionne automatiquement toutes les contributions Le sous-titrage permet plusieurs participants temps réel pour produire des et complets à partir sous-titreur en charge une portion du discours et fusionne automatiquement touets les Le sous-titrage permet plusieurs participants de ensemble en temps réel produrie sous-titres comlpets partir d'un flux audio chaque prend charge une portion du discours fusionne automatiquement toutes les contribtuions"
+  }
+]

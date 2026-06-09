@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -19,45 +20,89 @@
   .state-stopped { color: #888; }
   .grid { display: grid; grid-template-columns: 100px 80px; gap: 6px; align-items: center; max-width: 220px; }
   .help { color: #666; font-size: 0.85em; }
+  #audio-status { font-weight: bold; margin-left: 10px; }
+  .speed-fast { color: #2c7a2c; font-weight: bold; }
+  .speed-slow { color: #d63f00; font-weight: bold; }
+  .speed-normal { color: #888; }
 </style>
 </head>
 <body>
 
 <h2>STC - Console Admin</h2>
 
+<!-- ── RACCOURCIS ───────────────────────────────────────────────────────── -->
 <fieldset>
   <legend>Raccourcis</legend>
   <button onclick="window.open('/', '_blank')">Ouvrir un sous-titreur</button>
   <button onclick="window.open('/viewer', '_blank')">Ouvrir le viewer</button>
+  <button onclick="window.open('/results', '_blank')">Voir les résultats</button>
   <span class="help">S'ouvrent dans un nouvel onglet.</span>
 </fieldset>
 
+<!-- ── AUDIO SOURCE ─────────────────────────────────────────────────────── -->
+<fieldset>
+  <legend>🔊 Source audio</legend>
+  <audio id="audio-player" controls style="width:100%;">
+      <source src="/static/media/video.mp4" type="video/mp4">
+      Votre navigateur ne supporte pas l'audio.
+  </audio>
+  <div class="help" style="margin-top:8px;">
+    L'audio se lance automatiquement quand vous cliquez sur <strong>Démarrer</strong> (après le countdown).<br>
+  </div>
+</fieldset>
+
+<!-- ── PARAMÈTRES ───────────────────────────────────────────────────────── -->
 <fieldset>
   <legend>Paramètres</legend>
   <div class="grid">
-    <label>Slot (s) :</label><input type="number" id="slot" value="30" min="5">
-    <label>Overlap (s) :</label><input type="number" id="overlap" value="5" min="0">
-    <label>Pools :</label><input type="number" id="pools" value="1" min="1">
-    <label>Countdown (s) :</label><input type="number" id="countdown" value="3" min="0">
+    <label>Slot (s) :</label>
+    <input type="number" id="slot" value="20" min="5">
+    <label>Overlap (s) :</label>
+    <input type="number" id="overlap" value="5" min="0">
+    <label>Pools :</label>
+    <input type="number" id="pools" value="1" min="1">
+    <label>Countdown (s) :</label>
+    <input type="number" id="countdown" value="3" min="0">
   </div>
-  <div class="help">La session tourne tant que vous ne cliquez pas sur Arrêter (live). Countdown 0 = démarrage immédiat.</div>
+  <div class="help">
+    La session tourne tant que vous ne cliquez pas sur Arrêter. Countdown 0 = démarrage immédiat.<br>
+    ✅ <strong>Adaptation dynamique</strong> : le slot de chaque sous-titreur s'ajuste automatiquement à sa vitesse de frappe.
+  </div>
   <div style="margin-top:12px">
-    <button onclick="send('admin_start')">Démarrer</button>
-    <button onclick="send('admin_pause')">Pause / Reprendre</button>
-    <button onclick="send('admin_stop')">Arrêter</button>
+    <button onclick="send('admin_start')">▶ Démarrer</button>
+    <button onclick="send('admin_pause')">⏸ Pause / Reprendre</button>
+    <button onclick="send('admin_stop')">⏹ Arrêter</button>
   </div>
-  <div style="margin-top:10px">État : <span id="state-display" class="state-stopped">inactif</span></div>
+  <div style="margin-top:10px">
+    État session : <span id="state-display" class="state-stopped">inactif</span>
+    <span id="audio-status" style="color:#888; font-size:0.85em;"></span>
+  </div>
 </fieldset>
 
+<!-- ── UTILISATEURS ─────────────────────────────────────────────────────── -->
 <fieldset>
-  <legend>Utilisateurs connectés</legend>
+  <legend>Utilisateurs connectés — <span id="nb-users">0</span> sous-titreur(s)</legend>
   <table id="user-table">
-    <thead><tr><th>Nom</th><th>Pool</th><th>Position</th><th>Réassigner</th></tr></thead>
-    <tbody><tr><td colspan="4">Aucun</td></tr></tbody>
+    <thead>
+      <tr>
+        <th>Nom</th>
+        <th>Pool</th>
+        <th>Position</th>
+        <th>Vitesse</th>
+        <th>Slot adapté</th>
+        <th>Réassigner</th>
+      </tr>
+    </thead>
+    <tbody><tr><td colspan="6">Aucun</td></tr></tbody>
   </table>
-  <div class="help">Position 0 = premier à prendre la main, 1 = deuxième, etc. Les positions sont compactées automatiquement quand quelqu'un part ou est déplacé.</div>
+  <div class="help">
+    🟢 Rapide (&ge;1.5 m/s) → slot +5s &nbsp;|&nbsp;
+    🔴 Lent (&le;0.8 m/s) → slot -5s &nbsp;|&nbsp;
+    ⚪ Normal → slot standard
+  </div>
 </fieldset>
 
+<!-- ── FLUX TEMPS RÉEL ──────────────────────────────────────────────────── -->
 <fieldset>
   <legend>Flux temps réel</legend>
   <div id="live-area" style="min-height:1.6rem;padding:4px 8px;background:#f0f4ff;border:1px solid #c8d4f0;margin-bottom:6px;font-size:0.9rem;color:#555">
@@ -66,6 +111,7 @@
   <div id="log">En attente...</div>
 </fieldset>
 
+<!-- ── FICHIERS EXPORTÉS ────────────────────────────────────────────────── -->
 <fieldset>
   <legend>Fichiers exportés</legend>
   <div class="files" id="files">(rien encore)</div>
@@ -78,10 +124,12 @@ const logDiv = document.getElementById('log');
 const userTbody = document.querySelector('#user-table tbody');
 const stateDisplay = document.getElementById('state-display');
 const filesDiv = document.getElementById('files');
+const audioPlayer = document.getElementById('audio-player');
+const audioStatus = document.getElementById('audio-status');
+const liveArea = document.getElementById('live-area');
 let currentUsers = [];
 let numPools = 1;
-let liveTypers = {};  // { username: { pool, text } }
-const liveArea = document.getElementById('live-area');
+let liveTypers = {};
 
 ws.onopen = () => {
   addLog("Connecté.");
@@ -92,52 +140,26 @@ ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
 
   if (data.type === "welcome") {
-    const s = data.state;
-    if (s) {
-      numPools = (s.config && s.config.num_pools) || numPools;
-      if (!s.active) {
-        stateDisplay.innerText = "inactif";
-        stateDisplay.className = "state-stopped";
-      } else if (s.countdown && s.countdown > 0) {
-        stateDisplay.innerText = `COUNTDOWN ${s.countdown}`;
-        stateDisplay.className = "state-countdown";
-      } else if (s.paused) {
-        stateDisplay.innerText = "EN PAUSE";
-        stateDisplay.className = "state-paused";
-      } else {
-        stateDisplay.innerText = `actif - slot ${s.slot_index} - ${s.time_left}s restantes`;
-        stateDisplay.className = "state-running";
-      }
-      renderUsers();
-    }
+    if (data.state) updateStateDisplay(data.state);
   }
 
   if (data.type === "user_update") {
     currentUsers = data.users.filter(u => u.id !== 'admin_master');
+    document.getElementById('nb-users').textContent = currentUsers.length;
     renderUsers();
   }
 
   if (data.type === "sync_update" || data.type === "session_started" || data.type === "session_paused") {
     const s = data.state;
     numPools = (s.config && s.config.num_pools) || numPools;
-    if (!s.active) {
-      stateDisplay.innerText = "inactif";
-      stateDisplay.className = "state-stopped";
-    } else if (s.countdown && s.countdown > 0) {
-      stateDisplay.innerText = `COUNTDOWN ${s.countdown}`;
-      stateDisplay.className = "state-countdown";
-    } else if (s.paused) {
-      stateDisplay.innerText = "EN PAUSE";
-      stateDisplay.className = "state-paused";
-    } else {
-      stateDisplay.innerText = `actif - slot ${s.slot_index} - ${s.time_left}s restantes`;
-      stateDisplay.className = "state-running";
-    }
+    updateStateDisplay(s);
     renderUsers();
   }
 
   if (data.type === "new_text") {
     addLog(`[P${data.pool} | slot ${data.slot_index}] ${data.user} : ${escapeHtml(data.text)}`);
+    delete liveTypers[data.user];
+    renderLiveTyping();
   }
 
   if (data.type === "live_typing") {
@@ -163,6 +185,22 @@ ws.onmessage = (event) => {
   }
 };
 
+function updateStateDisplay(s) {
+  if (!s.active) {
+    stateDisplay.innerText = "inactif";
+    stateDisplay.className = "state-stopped";
+  } else if (s.countdown && s.countdown > 0) {
+    stateDisplay.innerText = `COUNTDOWN ${s.countdown}`;
+    stateDisplay.className = "state-countdown";
+  } else if (s.paused) {
+    stateDisplay.innerText = "EN PAUSE";
+    stateDisplay.className = "state-paused";
+  } else {
+    stateDisplay.innerText = `actif — slot ${s.slot_index} — ${s.time_left}s restantes`;
+    stateDisplay.className = "state-running";
+  }
+}
+
 function renderLiveTyping() {
   const entries = Object.entries(liveTypers);
   if (!entries.length) {
@@ -176,22 +214,41 @@ function renderLiveTyping() {
 
 function renderUsers() {
   if (!currentUsers.length) {
-    userTbody.innerHTML = '<tr><td colspan="4">Aucun</td></tr>';
+    userTbody.innerHTML = '<tr><td colspan="6">Aucun</td></tr>';
     return;
   }
+  const baseSlot = parseInt(document.getElementById('slot').value) || 20;
+
   userTbody.innerHTML = currentUsers.map(u => {
     const poolOpts = Array.from({length: numPools}, (_, i) =>
-      `<option value="${i+1}" ${u.pool === i+1 ? 'selected' : ''}>Pool ${i+1}</option>`).join('');
+      `<option value="${i+1}" ${u.pool === i+1 ? 'selected' : ''}>Pool ${i+1}</option>`
+    ).join('');
+
+    // Affichage vitesse avec couleur
+    let speedHtml = '<span class="speed-normal">-</span>';
+    if (u.speed && u.speed > 0) {
+      const cls = u.speed >= 1.5 ? 'speed-fast' : u.speed <= 0.8 ? 'speed-slow' : 'speed-normal';
+      const icon = u.speed >= 1.5 ? '🟢' : u.speed <= 0.8 ? '🔴' : '⚪';
+      speedHtml = `<span class="${cls}">${icon} ${u.speed} m/s</span>`;
+    }
+
+    // Affichage slot adapté
+    const slotAdapt = u.personal_slot || baseSlot;
+    const slotColor = slotAdapt > baseSlot ? '#2c7a2c' : slotAdapt < baseSlot ? '#d63f00' : '#888';
+    const slotHtml = `<span style="color:${slotColor};font-weight:bold">${slotAdapt}s</span>`;
+
     return `
       <tr>
         <td>${escapeHtml(u.name)}</td>
         <td>${u.pool}</td>
         <td>${u.order}</td>
+        <td>${speedHtml}</td>
+        <td>${slotHtml}</td>
         <td>
           <label style="font-size:0.85em;color:#666">Pool :</label>
           <select id="pool-${u.id}">${poolOpts}</select>
           <label style="font-size:0.85em;color:#666;margin-left:6px">Position :</label>
-          <input type="number" id="order-${u.id}" value="${u.order}" min="0" style="width:50px" title="Position dans la rotation : 0 = premier à passer, 1 = deuxième, etc.">
+          <input type="number" id="order-${u.id}" value="${u.order}" min="0" style="width:50px">
           <button class="reassign-btn" onclick="reassign('${u.id}')">Appliquer</button>
         </td>
       </tr>
@@ -199,13 +256,7 @@ function renderUsers() {
   }).join("");
 }
 
-function reassign(uid) {
-  const pool = parseInt(document.getElementById(`pool-${uid}`).value);
-  const order = parseInt(document.getElementById(`order-${uid}`).value);
-  ws.send(JSON.stringify({ type: "admin_assign", user_id: uid, pool_id: pool, order: order }));
-  addLog(`> admin_assign ${uid} → pool ${pool} ordre ${order}`);
-}
-
+// ── Contrôle audio + envoi ─────────────────────────────────────────────────
 function send(type) {
   const payload = {
     type,
@@ -216,6 +267,50 @@ function send(type) {
   };
   ws.send(JSON.stringify(payload));
   addLog(`> ${type}`);
+
+  if (type === 'admin_start') {
+    const countdown = parseInt(document.getElementById('countdown').value) || 0;
+    audioPlayer.currentTime = 0;
+    if (countdown > 0) {
+      audioStatus.textContent = `⏳ Audio démarre dans ${countdown}s...`;
+      audioStatus.style.color = "#b87000";
+      setTimeout(() => {
+        audioPlayer.play()
+          .then(() => { audioStatus.textContent = "🔊 Audio en cours"; audioStatus.style.color = "#2c7a2c"; })
+          .catch(() => { audioStatus.textContent = "⚠️ Cliquez Play sur le player"; audioStatus.style.color = "#d63f00"; addLog("⚠️ Autoplay bloqué — cliquez Play manuellement."); });
+      }, countdown * 1000);
+    } else {
+      audioPlayer.play()
+        .then(() => { audioStatus.textContent = "🔊 Audio en cours"; audioStatus.style.color = "#2c7a2c"; })
+        .catch(() => { audioStatus.textContent = "⚠️ Cliquez Play sur le player"; audioStatus.style.color = "#d63f00"; addLog("⚠️ Autoplay bloqué — cliquez Play manuellement."); });
+    }
+  }
+
+  if (type === 'admin_pause') {
+    if (audioPlayer.paused) {
+      audioPlayer.play();
+      audioStatus.textContent = "🔊 Audio en cours";
+      audioStatus.style.color = "#2c7a2c";
+    } else {
+      audioPlayer.pause();
+      audioStatus.textContent = "⏸ Audio en pause";
+      audioStatus.style.color = "#b87000";
+    }
+  }
+
+  if (type === 'admin_stop') {
+    audioPlayer.pause();
+    audioPlayer.currentTime = 0;
+    audioStatus.textContent = "⏹ Audio arrêté";
+    audioStatus.style.color = "#888";
+  }
+}
+
+function reassign(uid) {
+  const pool = parseInt(document.getElementById(`pool-${uid}`).value);
+  const order = parseInt(document.getElementById(`order-${uid}`).value);
+  ws.send(JSON.stringify({ type: "admin_assign", user_id: uid, pool_id: pool, order: order }));
+  addLog(`> admin_assign ${uid} → pool ${pool} ordre ${order}`);
 }
 
 function addLog(msg) {
