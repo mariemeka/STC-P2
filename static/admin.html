@@ -46,6 +46,13 @@
       <source src="/static/media/video.mp4" type="video/mp4">
       Votre navigateur ne supporte pas l'audio.
   </audio>
+  <div style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+    <input type="file" id="audio-file-input" accept="audio/*,video/mp4,video/webm" style="display:none;" onchange="document.getElementById('audio-file-name').textContent = this.files[0]?.name || 'Aucun fichier';">
+    <label for="audio-file-input" style="cursor:pointer; padding:4px 10px; border:1px solid #aaa; border-radius:4px; background:#f5f5f5; font-size:0.9em;">Choisir un fichier</label>
+    <span id="audio-file-name" style="font-size:0.85em; color:#555;">Aucun fichier sélectionné</span>
+    <button onclick="uploadAudio()" style="padding:4px 10px;">Charger</button>
+    <span id="upload-status" style="font-size:0.85em;"></span>
+  </div>
   <div class="help" style="margin-top:8px;">
     L'audio se lance automatiquement quand vous cliquez sur <strong>Démarrer</strong> (après le countdown).<br>
   </div>
@@ -126,6 +133,28 @@ const stateDisplay = document.getElementById('state-display');
 const filesDiv = document.getElementById('files');
 const audioPlayer = document.getElementById('audio-player');
 const audioStatus = document.getElementById('audio-status');
+
+async function uploadAudio() {
+  const input = document.getElementById('audio-file-input');
+  const status = document.getElementById('upload-status');
+  if (!input.files.length) { status.textContent = "Aucun fichier sélectionné."; return; }
+  const formData = new FormData();
+  formData.append('file', input.files[0]);
+  status.textContent = "Envoi en cours..."; status.style.color = "#b87000";
+  try {
+    const res = await fetch('/upload-audio', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (data.url) {
+      audioPlayer.src = data.url + '?t=' + Date.now();
+      audioPlayer.load();
+      status.textContent = "Fichier chargé."; status.style.color = "#2c7a2c";
+    } else {
+      status.textContent = data.error || "Erreur."; status.style.color = "#d63f00";
+    }
+  } catch(e) {
+    status.textContent = "Erreur réseau."; status.style.color = "#d63f00";
+  }
+}
 const liveArea = document.getElementById('live-area');
 let currentUsers = [];
 let numPools = 1;

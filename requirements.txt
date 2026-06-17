@@ -2,3 +2,5 @@ fastapi
 uvicorn[standard]
 websockets
 symspellpy
+pygrammalecte
+python-multipart
