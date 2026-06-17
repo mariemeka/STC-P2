@@ -13,16 +13,20 @@ def _srt_time(seconds: float) -> str:
 
 
 def to_srt(slots: List[dict], slot_duration: int) -> str:
-    """slots: liste de {slot_index, text, timestamp}. timestamps absolus en epoch.
+    """slots: liste de {slot_index, text, timestamp}.
 
-    Le SRT utilise le temps RELATIF au premier slot.
+    Le minutage SRT est calculé à partir de `slot_index * slot_duration`
+    (la grille fixe des segments d'écoute), et non à partir de l'horodatage
+    réel de frappe : le temps d'écriture peut être plus long que le slot
+    (cf. SessionConfig.writing_time), donc l'horodatage de soumission ne
+    correspond plus au moment réel du segment dans la vidéo/audio source.
     """
     if not slots:
         return ""
-    base = min(s["timestamp"] for s in slots)
     lines = []
     for i, s in enumerate(slots, start=1):
-        start = s["timestamp"] - base
+        idx = s.get("slot_index", i - 1)
+        start = idx * slot_duration
         end = start + slot_duration
         lines.append(str(i))
         lines.append(f"{_srt_time(start)} --> {_srt_time(end)}")
