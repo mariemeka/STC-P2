@@ -66,7 +66,7 @@ Le serveur écoute sur `http://<TON-IP>:8000`.
 1. Ouvrir **`/admin`** dans un onglet.
 2. Ouvrir **2 ou 3 onglets** sur **`/`** (un par sous-titreur, mettre des noms différents).
 3. Ouvrir **`/viewer`** dans un autre onglet pour voir le rendu live.
-4. Sur l'admin : régler `slot=30`, `overlap=5`, `pools=1`, cliquer **Démarrer**.
+4. Sur l'admin : régler `slot=8`, `temps d'écriture=24`, `pools=1`, cliquer **Démarrer**.
 5. Le 1er sous-titreur reçoit le tour (badge vert "C'EST VOTRE TOUR" + beep + flash). Il tape, puis **Entrée** pour envoyer.
 6. À la fin de chaque slot, le suivant prend le relais. Pendant l'overlap (5 dernières secondes), les deux sont actifs en parallèle.
 7. Cliquer **Arrêter** sur l'admin → liens `.srt` et `.txt` apparaissent, cliquables.
@@ -79,16 +79,18 @@ Le serveur écoute sur `http://<TON-IP>:8000`.
 
 | Paramètre | Description | Valeur typique |
 |-----------|-------------|----------------|
-| **Slot** | Durée pendant laquelle un sous-titreur écrit (secondes) | 30 |
-| **Overlap** | Pendant les N dernières secondes du slot, le suivant a déjà commencé | 3-5 |
+| **Slot (écoute)** | Durée d'un segment écouté = durée de chaque sous-titre dans le `.srt` final (secondes) | 8 |
+| **Temps d'écriture** | Durée pendant laquelle un sous-titreur reste actif pour taper son segment (peut dépasser le slot) | 24 (≈3× le slot) |
 | **Pools** | Groupes de sous-titreurs (1 pool = 1 flux). Plusieurs pools = flux parallèles (ex. plusieurs langues) | 1 |
+
+> ⚠️ Le temps d'écoute (slot) et le temps d'écriture sont désormais découplés : le slot fixe la cadence des segments (et leur durée dans le SRT), le temps d'écriture fixe combien de temps un sous-titreur a réellement pour taper. Si le temps d'écriture dépasse un slot, plusieurs sous-titreurs sont actifs en parallèle (relais en cascade). Pour ne perdre aucun segment, prévoyez au moins `temps d'écriture ÷ slot` sous-titreurs par pool.
 
 ---
 
 ## ✨ Fonctionnalités
 
 - **Rotation automatique** des sous-titreurs avec calcul `is_my_turn` côté serveur (anti-triche).
-- **Overlap** entre slots : deux sous-titreurs actifs simultanément pendant la transition, pas de trou.
+- **Temps d'écriture découplé du temps d'écoute** : le slot (écoute) fixe la cadence/durée des sous-titres, le temps d'écriture (configurable par l'admin) fixe combien de temps chaque sous-titreur a réellement pour taper — plusieurs sous-titreurs peuvent être actifs en parallèle en relais, pas de trou.
 - **Auto-envoi** en fin de slot si l'utilisateur n'a pas pressé Entrée (rien n'est perdu).
 - **Alertes** : beep + flash vert au démarrage du tour, timer rouge clignotant quand `< 3s`.
 - **Correcteur français** natif intégré au navigateur (`lang="fr"`).
@@ -150,7 +152,7 @@ Tous les clients se connectent sur `ws://<host>/ws`.
 |------|---------|----------|
 | `join` | `{user_id?, username}` | Sous-titreur / admin |
 | `viewer_join` | `{}` | Viewer |
-| `admin_start` | `{slot, overlap, pools}` | Admin |
+| `admin_start` | `{slot, writing_time, pools}` | Admin |
 | `admin_pause` | `{}` | Admin |
 | `admin_stop` | `{}` | Admin |
 | `caption` | `{text}` | Sous-titreur |

@@ -238,10 +238,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 session_id = f"sess_{int(time.time())}"
                 last_live_save.clear()
                 scheduler.set_config(
-                    slot_dur=int(msg.get("slot", 20)),
-                    overlap=int(msg.get("overlap", 5)),
+                    slot_dur=int(msg.get("slot", 8)),
+                    writing_time=int(msg.get("writing_time", 24)),
                     pools=int(msg.get("pools", 1)),
                     countdown=int(msg.get("countdown", 3)),
+                    pre_alert=int(msg.get("pre_alert", 5)),
                 )
                 scheduler.config.start_time = time.time() + scheduler.config.countdown
                 scheduler.config.is_active = True
@@ -304,9 +305,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                         # ── Mesure vitesse de frappe + adaptation ─────────
                         nb_mots = len(text.split()) if text.strip() else 0
-                        elapsed = state.get("elapsed", 1)
-                        cycle_time = max(1, scheduler.config.slot_duration - scheduler.config.overlap_duration)
-                        temps_dans_slot = elapsed % cycle_time
+                        temps_dans_slot = state.get("time_in_turn", 0) or 1
                         if temps_dans_slot > 0 and nb_mots > 0:
                             vitesse = round(nb_mots / temps_dans_slot, 2)
                             scheduler.update_typing_speed(user_id, vitesse)
@@ -422,7 +421,7 @@ async def broadcast_user_list():
             "pool": u.pool_id,
             "order": u.order_in_pool,
             "speed": u.typing_speed,
-            "personal_slot": u.slot_duration_personal or 0,
+            "personal_writing_time": u.writing_time_personal or 0,
         }
         for u in scheduler.users.values()
     ]

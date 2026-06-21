@@ -14,6 +14,7 @@
   .badge { display: inline-block; padding: 2px 8px; border: 1px solid #888; }
   .turn-on { color: green; font-weight: bold; }
   .turn-off { color: #888; }
+  .turn-soon { color: #b87000; font-weight: bold; }
   #timer { font-size: 2rem; }
   #timer.warn { color: #d93025; animation: blink 0.5s linear infinite; }
   @keyframes blink { 50% { opacity: 0.3; } }
@@ -29,6 +30,7 @@
   }
   #countdown-overlay.visible { display: flex; }
   #countdown-number { font-size: 12rem; font-weight: bold; color: #ff6b6b; }
+  #countdown-overlay.prealert #countdown-number { color: #ffae42; }
   #countdown-label { font-size: 1.5rem; margin-top: 20px; }
 </style>
 </head>
@@ -54,6 +56,7 @@
     <span class="badge" id="status-display">En attente</span>
   </div>
   <div class="row">Temps restant : <span id="timer">--</span> s</div>
+  <div class="row" id="next-turn-row" style="display:none">⏰ À vous dans : <span id="next-turn-display">--</span> s</div>
   <div class="row">Slot courant : <span id="slot-display">-</span></div>
   <div class="row">
     <textarea id="text-input" lang="fr" spellcheck="true" autocorrect="on" autocapitalize="sentences"
@@ -87,6 +90,10 @@ let lastAutoFlushSlot = -1;
 let countdownTimer = null;
 let audioCtx = null;
 let lastSentLiveText = "";
+let preAlertSeconds = 5;
+let nextTurnAt = null;
+let inPreAlert = false;
+let lastPreAlertTickSecond = null;
 
 if (localStorage.getItem('stc_username')) {
   document.getElementById('username-input').value = localStorage.getItem('stc_username');
@@ -141,6 +148,10 @@ function connect() {
       flushIfNeeded();
       stopCountdown();
       hideCountdownOverlay();
+      inPreAlert = false;
+      lastPreAlertTickSecond = null;
+      hidePreAlertOverlay();
+      document.getElementById('next-turn-row').style.display = 'none';
       updateUI();
       document.getElementById('status-display').innerText = "Session terminée";
       if (msg.files && msg.files.length) {
@@ -153,6 +164,7 @@ function connect() {
     document.getElementById('status-display').innerText = "Déconnecté";
     stopCountdown();
     hideCountdownOverlay();
+    hidePreAlertOverlay();
   };
 }
 
@@ -164,6 +176,9 @@ function applyState(state) {
   currentSlot = (state.my_slot_index != null) ? state.my_slot_index : (state.slot_index || 0);
   document.getElementById('slot-display').innerText = currentSlot;
   endsAt = Date.now() + (state.time_left ?? 0) * 1000;
+
+  if (state.config && state.config.pre_alert != null) preAlertSeconds = state.config.pre_alert;
+  nextTurnAt = (state.next_turn_in != null) ? Date.now() + state.next_turn_in * 1000 : null;
 
   // Countdown phase
   const cd = state.countdown || 0;
@@ -184,6 +199,9 @@ function applyState(state) {
   }
   // Transition tour commence → alerte
   if (!prevIsMyTurn && isMyTurn && active && !paused) {
+    inPreAlert = false;
+    lastPreAlertTickSecond = null;
+    hidePreAlertOverlay();
     document.body.classList.remove('flash'); void document.body.offsetWidth;
     document.body.classList.add('flash');
     beep(880, 150);
@@ -195,12 +213,29 @@ function applyState(state) {
 }
 
 function showCountdownOverlay(seconds) {
+  const overlay = document.getElementById('countdown-overlay');
+  overlay.classList.remove('prealert');
+  document.getElementById('countdown-label').innerText = "La session démarre...";
   document.getElementById('countdown-number').innerText = seconds;
-  document.getElementById('countdown-overlay').classList.add('visible');
+  overlay.classList.add('visible');
 }
 
 function hideCountdownOverlay() {
   document.getElementById('countdown-overlay').classList.remove('visible');
+}
+
+function showPreAlertOverlay(seconds) {
+  const overlay = document.getElementById('countdown-overlay');
+  overlay.classList.add('visible', 'prealert');
+  document.getElementById('countdown-number').innerText = seconds;
+  document.getElementById('countdown-label').innerText = "À vous dans...";
+}
+
+function hidePreAlertOverlay() {
+  const overlay = document.getElementById('countdown-overlay');
+  if (overlay.classList.contains('prealert')) {
+    overlay.classList.remove('visible', 'prealert');
+  }
 }
 
 function startCountdown() {
@@ -214,6 +249,51 @@ function startCountdown() {
     else timerEl.classList.remove('warn');
 
     if (isMyTurn && remaining < 0.4) flushIfNeeded();
+
+    // ── Préavis avant le début du tour ──────────────────────────────
+    const nextTurnRow = document.getElementById('next-turn-row');
+    if (!isMyTurn && active && !paused && !countdownActive && nextTurnAt != null) {
+      const untilTurn = (nextTurnAt - Date.now()) / 1000;
+      if (untilTurn > 0) {
+        nextTurnRow.style.display = 'block';
+        document.getElementById('next-turn-display').innerText = untilTurn.toFixed(1);
+
+        if (untilTurn <= preAlertSeconds) {
+          if (!inPreAlert) {
+            inPreAlert = true;
+            beep(660, 100); // bip discret : entrée en préavis
+            updateUI();
+          }
+          const overlayThreshold = Math.min(3, preAlertSeconds);
+          if (untilTurn <= overlayThreshold) {
+            const sec = Math.ceil(untilTurn);
+            showPreAlertOverlay(sec);
+            if (sec !== lastPreAlertTickSecond && sec > 0) {
+              lastPreAlertTickSecond = sec;
+              beep(440, 80); // tick chaque seconde dans les 3 dernières secondes
+            }
+          } else {
+            hidePreAlertOverlay();
+            lastPreAlertTickSecond = null;
+          }
+        } else if (inPreAlert) {
+          inPreAlert = false;
+          lastPreAlertTickSecond = null;
+          hidePreAlertOverlay();
+          updateUI();
+        }
+      } else {
+        nextTurnRow.style.display = 'none';
+      }
+    } else {
+      nextTurnRow.style.display = 'none';
+      if (inPreAlert) {
+        inPreAlert = false;
+        lastPreAlertTickSecond = null;
+        hidePreAlertOverlay();
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────
   }, 100);
 }
 
@@ -250,7 +330,11 @@ function updateUI() {
   } else {
     area.disabled = true; btn.disabled = true;
     area.placeholder = "Attendez votre tour...";
-    status.innerText = "En attente"; status.className = "badge turn-off";
+    if (inPreAlert) {
+      status.innerText = "Bientôt votre tour"; status.className = "badge turn-soon";
+    } else {
+      status.innerText = "En attente"; status.className = "badge turn-off";
+    }
   }
 }
 

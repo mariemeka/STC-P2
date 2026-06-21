@@ -62,10 +62,12 @@
 <fieldset>
   <legend>Paramètres</legend>
   <div class="grid">
-    <label>Slot (s) :</label>
-    <input type="number" id="slot" value="20" min="5">
-    <label>Overlap (s) :</label>
-    <input type="number" id="overlap" value="5" min="0">
+    <label>Slot — temps d'écoute (s) :</label>
+    <input type="number" id="slot" value="8" min="1">
+    <label>Temps d'écriture (s) :</label>
+    <input type="number" id="writing_time" value="24" min="1">
+    <label>Préavis (s) :</label>
+    <input type="number" id="pre_alert" value="5" min="0">
     <label>Pools :</label>
     <input type="number" id="pools" value="1" min="1">
     <label>Countdown (s) :</label>
@@ -73,7 +75,11 @@
   </div>
   <div class="help">
     La session tourne tant que vous ne cliquez pas sur Arrêter. Countdown 0 = démarrage immédiat.<br>
-    ✅ <strong>Adaptation dynamique</strong> : le slot de chaque sous-titreur s'ajuste automatiquement à sa vitesse de frappe.
+    🎧 <strong>Slot</strong> = durée d'un segment écouté (et durée de chaque sous-titre dans le .srt final).<br>
+    ⌨️ <strong>Temps d'écriture</strong> = durée pendant laquelle un sous-titreur reste actif pour taper son segment (peut être plus long que le slot). Plusieurs sous-titreurs sont alors actifs en parallèle, en relais.<br>
+    ⏰ <strong>Préavis</strong> = combien de secondes avant le début de son tour le sous-titreur est alerté ("Bientôt votre tour"), pour qu'il ait le temps de se préparer avant de devoir taper. Un overlay plein écran apparaît dans les 3 dernières secondes.<br>
+    💡 Pour ne perdre aucun segment, prévoyez au moins <code>temps d'écriture ÷ slot</code> sous-titreurs par pool (ex. écriture 24s / slot 8s → 3 sous-titreurs mini par pool).<br>
+    ✅ <strong>Adaptation dynamique</strong> : le temps d'écriture de chaque sous-titreur s'ajuste automatiquement à sa vitesse de frappe.
   </div>
   <div style="margin-top:12px">
     <button onclick="send('admin_start')">▶ Démarrer</button>
@@ -96,16 +102,16 @@
         <th>Pool</th>
         <th>Position</th>
         <th>Vitesse</th>
-        <th>Slot adapté</th>
+        <th>Écriture adaptée</th>
         <th>Réassigner</th>
       </tr>
     </thead>
     <tbody><tr><td colspan="6">Aucun</td></tr></tbody>
   </table>
   <div class="help">
-    🟢 Rapide (&ge;1.5 m/s) → slot +5s &nbsp;|&nbsp;
-    🔴 Lent (&le;0.8 m/s) → slot -5s &nbsp;|&nbsp;
-    ⚪ Normal → slot standard
+    🟢 Rapide (&ge;1.5 m/s) → écriture +5s &nbsp;|&nbsp;
+    🔴 Lent (&le;0.8 m/s) → écriture -5s &nbsp;|&nbsp;
+    ⚪ Normal → écriture standard
   </div>
 </fieldset>
 
@@ -246,7 +252,7 @@ function renderUsers() {
     userTbody.innerHTML = '<tr><td colspan="6">Aucun</td></tr>';
     return;
   }
-  const baseSlot = parseInt(document.getElementById('slot').value) || 20;
+  const baseWriting = parseInt(document.getElementById('writing_time').value) || 24;
 
   userTbody.innerHTML = currentUsers.map(u => {
     const poolOpts = Array.from({length: numPools}, (_, i) =>
@@ -261,10 +267,10 @@ function renderUsers() {
       speedHtml = `<span class="${cls}">${icon} ${u.speed} m/s</span>`;
     }
 
-    // Affichage slot adapté
-    const slotAdapt = u.personal_slot || baseSlot;
-    const slotColor = slotAdapt > baseSlot ? '#2c7a2c' : slotAdapt < baseSlot ? '#d63f00' : '#888';
-    const slotHtml = `<span style="color:${slotColor};font-weight:bold">${slotAdapt}s</span>`;
+    // Affichage temps d'écriture adapté
+    const writingAdapt = u.personal_writing_time || baseWriting;
+    const writingColor = writingAdapt > baseWriting ? '#2c7a2c' : writingAdapt < baseWriting ? '#d63f00' : '#888';
+    const writingHtml = `<span style="color:${writingColor};font-weight:bold">${writingAdapt}s</span>`;
 
     return `
       <tr>
@@ -272,7 +278,7 @@ function renderUsers() {
         <td>${u.pool}</td>
         <td>${u.order}</td>
         <td>${speedHtml}</td>
-        <td>${slotHtml}</td>
+        <td>${writingHtml}</td>
         <td>
           <label style="font-size:0.85em;color:#666">Pool :</label>
           <select id="pool-${u.id}">${poolOpts}</select>
@@ -290,7 +296,8 @@ function send(type) {
   const payload = {
     type,
     slot: document.getElementById('slot').value,
-    overlap: document.getElementById('overlap').value,
+    writing_time: document.getElementById('writing_time').value,
+    pre_alert: document.getElementById('pre_alert').value,
     pools: document.getElementById('pools').value,
     countdown: document.getElementById('countdown').value,
   };
