@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 
 from app.logic.scheduler import Scheduler
 from app.logic.fusion import fuse_session
-from app.engine.formatter import to_srt, to_txt
+from app.engine.formatter import to_srt, to_txt, redistribute_words
 from app.core.database import save_caption_to_csv
 from app.core.models import Caption
 
@@ -393,12 +393,9 @@ async def stop_and_export():
         # ── Correction post-fusion sur le texte final complet ─────────
         texte_complet = " ".join(c["text"] for c in captions if c["text"].strip())
         texte_corrige = correct_text(texte_complet, final=True)
-        mots = texte_corrige.split()
-        mots_par_slot = max(1, len(mots) // len(captions)) if captions else len(mots)
-        for i, caption in enumerate(captions):
-            debut = i * mots_par_slot
-            fin = debut + mots_par_slot if i < len(captions) - 1 else len(mots)
-            caption["text"] = " ".join(mots[debut:fin])
+        # Redistribue le texte sur les slots (en gardant leur minutage) et
+        # retire les sous-titres vides (cas : moins de mots que de slots).
+        captions = redistribute_words(captions, texte_corrige)
         # ─────────────────────────────────────────────────────────────
 
         srt_path = os.path.join("data", f"{session_id}_pool_{pool_id}.srt")

@@ -2,6 +2,24 @@
 from typing import List
 
 
+def redistribute_words(captions: List[dict], texte_corrige: str) -> List[dict]:
+    """Répartit le texte final corrigé uniformément sur les captions (par nb de
+    mots), en conservant le `slot_index` (donc le minutage) de chaque caption.
+
+    Retire les sous-titres devenus vides — cas où il y a moins de mots que de
+    slots, qui produisait sinon des blocs SRT vides.
+    """
+    if not captions:
+        return []
+    mots = texte_corrige.split()
+    mots_par_slot = max(1, len(mots) // len(captions))
+    for i, caption in enumerate(captions):
+        debut = i * mots_par_slot
+        fin = debut + mots_par_slot if i < len(captions) - 1 else len(mots)
+        caption["text"] = " ".join(mots[debut:fin])
+    return [c for c in captions if c["text"].strip()]
+
+
 def _srt_time(seconds: float) -> str:
     if seconds < 0:
         seconds = 0
