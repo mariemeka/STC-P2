@@ -12,9 +12,50 @@ Stratégie :
    niveau mot, avec tolérance si le dernier mot du slot N est un préfixe
    d'un mot du slot N+1.
 """
+import unicodedata
 from typing import Dict, List, Tuple
 from difflib import SequenceMatcher
 from app.core.database import read_session_csvs
+
+
+def _norm(w: str) -> str:
+    """Minuscule + suppression des accents (pour comparer 'prêt' et 'pret')."""
+    w = unicodedata.normalize("NFD", w.lower())
+    return "".join(c for c in w if unicodedata.category(c) != "Mn")
+
+
+def _damerau(a: str, b: str) -> int:
+    """Distance de Damerau-Levenshtein (transposition de 2 lettres adjacentes = 1)."""
+    la, lb = len(a), len(b)
+    d = [[0] * (lb + 1) for _ in range(la + 1)]
+    for i in range(la + 1):
+        d[i][0] = i
+    for j in range(lb + 1):
+        d[0][j] = j
+    for i in range(1, la + 1):
+        for j in range(1, lb + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1)
+    return d[la][lb]
+
+
+def _word_match(a: str, b: str) -> bool:
+    """Deux mots se correspondent pour la déduplication s'ils sont identiques,
+    identiques aux accents près, ou très proches (faute de frappe).
+
+    Tolérance proportionnelle à la longueur ; les mots courts (<4) doivent être
+    identiques (sinon trop de faux positifs : 'de' vs 'le')."""
+    if a == b:
+        return True
+    na, nb = _norm(a), _norm(b)
+    if na == nb:
+        return True
+    longueur = max(len(na), len(nb))
+    if longueur < 4:
+        return False
+    return _damerau(na, nb) <= (2 if longueur >= 6 else 1)
 
 
 def _is_typo_correction(prev: str, new: str) -> bool:
@@ -107,13 +148,14 @@ def _dedupe_pair(prev_text: str, next_text: str) -> Tuple[str, str]:
     prev_words = prev_last.split()
     next_words = next_first.split()
 
-    # Chercher combien de mots du début de next
-    # correspondent à la fin de prev
+    # Chercher combien de mots du début de next correspondent à la fin de prev.
+    # Comparaison tolérante aux fautes (_word_match) pour rattraper les overlaps
+    # où le mot répété a été mal tapé (ex. "toutes les" repris en "toutse les").
     max_k = min(len(prev_words), len(next_words))
     k_next = 0
 
     for k in range(max_k, 0, -1):
-        if prev_words[-k:] == next_words[:k]:
+        if all(_word_match(p, n) for p, n in zip(prev_words[-k:], next_words[:k])):
             k_next = k
             break
 
