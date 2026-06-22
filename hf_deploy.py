@@ -57,7 +57,7 @@ def main():
         folder_path=".",
         allow_patterns=[
             "Dockerfile", ".dockerignore",
-            "main.py", "requirements.txt", "fr-100k.txt",
+            "main.py", "requirements.txt", "fr-100k.txt", "reference.txt",
             "app/**", "static/**",
         ],
         ignore_patterns=["static/audio/*"],

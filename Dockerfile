@@ -14,6 +14,7 @@ RUN python -c "from pygrammalecte import grammalecte_text; list(grammalecte_text
 # Code de l'application
 COPY main.py .
 COPY fr-100k.txt .
+COPY reference.txt .
 COPY app ./app
 COPY static ./static
 

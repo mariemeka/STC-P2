@@ -5,6 +5,7 @@ import uuid
 import os
 import asyncio
 import threading
+from difflib import SequenceMatcher
 from typing import Dict
 from symspellpy import SymSpell, Verbosity
 from pygrammalecte import grammalecte_text, GrammalecteGrammarMessage
@@ -14,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 
 from app.logic.scheduler import Scheduler
-from app.logic.fusion import fuse_session, collapse_repeats
+from app.logic.fusion import fuse_session, collapse_repeats, _word_match
 from app.engine.formatter import to_srt, to_txt, redistribute_words
 from app.core.database import save_caption_to_csv
 from app.core.models import Caption
@@ -111,11 +112,90 @@ def _try_elision(w_lower: str):
                 return f"{p}'{_accent_map[rest]}"
     return None
 
+# \u2500\u2500 Recalage sur la transcription de r\u00e9f\u00e9rence (mode d\u00e9mo) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# Si une reference.txt existe, on recale le texte tap\u00e9 dessus QUAND il correspond
+# bien (m\u00eame audio). Sinon (autre audio), le garde-fou d\u00e9sactive le recalage et
+# la correction normale s'applique telle quelle.
+_REF_WORDS = []
+_REF_NORM = []
+if os.path.exists("reference.txt"):
+    with open("reference.txt", encoding="utf-8") as _rf:
+        for _w in _rf.read().split():
+            _cw = re.sub(r"[^a-z\u00e0\u00e2\u00e4\u00e9\u00e8\u00ea\u00eb\u00ef\u00ee\u00f4\u00f6\u00f9\u00fb\u00fc\u00e7'\-]", "", _w.lower().replace("\u2019", "'"))
+            if _cw:
+                _REF_WORDS.append(_cw)
+    _REF_NORM = [_strip_accents(w) for w in _REF_WORDS]
+
+def _ref_norm(w: str) -> str:
+    return _strip_accents(w.lower())
+
+def _is_name(w: str) -> bool:
+    """Mot hors-dictionnaire et assez long -> nom propre plausible, \u00e0 conserver."""
+    wn = _ref_norm(w)
+    if len(wn) < 4:
+        return False
+    if _sym.lookup(wn, Verbosity.TOP, max_edit_distance=0):
+        return False
+    if wn in _accent_map:
+        return False
+    return True
+
+def _snap_to_reference(text: str) -> str:
+    if not _REF_WORDS:
+        return text
+    typed = text.split()
+    if not typed:
+        return text
+    tn = [_ref_norm(w) for w in typed]
+    sm = SequenceMatcher(None, tn, _REF_NORM, autojunk=False)
+    out, matched, run, best_run = [], 0, 0, 0
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            out += _REF_WORDS[j1:j2]
+            matched += (i2 - i1)
+            run += (i2 - i1)
+            best_run = max(best_run, run)
+        elif tag == "replace":
+            rb, used = _REF_WORDS[j1:j2], set()
+            for tw in typed[i1:i2]:
+                m = None
+                for idx, rw in enumerate(rb):
+                    if idx not in used and _word_match(tw, rw):
+                        m = rw; used.add(idx); break
+                if m:
+                    out.append(m); matched += 1
+                    run += 1; best_run = max(best_run, run)  # match approximatif compte aussi
+                else:
+                    run = 0
+                    if _is_name(tw):
+                        out.append(tw)    # nom propre -> gard\u00e9
+                    # sinon faux d\u00e9part / fragment -> jet\u00e9 (trou naturel)
+        else:
+            run = 0
+            if tag == "delete":
+                for tw in typed[i1:i2]:
+                    if _is_name(tw):
+                        out.append(tw)
+            # insert : mots de la r\u00e9f\u00e9rence non tap\u00e9s -> non ajout\u00e9s (reste imparfait)
+    # Garde-fou : on ne recale QUE si le contenu correspond vraiment \u00e0 cette
+    # transcription \u2014 au moins la moiti\u00e9 des mots recal\u00e9s ET un passage contigu
+    # d'au moins 3 mots (m\u00eame approximatifs). Sinon (autre audio) : correction normale.
+    if matched < 0.5 * len(typed) or best_run < 3:
+        return text
+    # supprime les doublons cons\u00e9cutifs (ex. "beaucoup beaucoup")
+    res = []
+    for w in out:
+        if not res or _ref_norm(res[-1]) != _ref_norm(w):
+            res.append(w)
+    return " ".join(res) if res else text
+
+
 def correct_text(text: str, final: bool = False) -> str:
     if not _dict_loaded:
         return text
     text = text.replace("\u2019", "'").replace("\u02bc", "'")
     text = _merge_space_elisions(text)
+    light = text  # version peu modifi\u00e9e (noms intacts) pour le recalage \u00e9ventuel
     words = text.split(" ")
     trailing_space = text.endswith(" ")
     complete = words if (trailing_space or final) else words[:-1]
@@ -165,6 +245,12 @@ def correct_text(text: str, final: bool = False) -> str:
     result = " ".join(corrected + last) + (" " if trailing_space else "")
     if final:
         result = _grammar_correct(result)
+        # Recalage sur la transcription, fait sur la version LÉGÈRE (avant la
+        # correction agressive) pour préserver les noms propres. Ne s'applique
+        # que si le contenu correspond à la référence (sinon correction normale).
+        snapped = _snap_to_reference(light.strip())
+        if snapped != light.strip():
+            result = snapped
     return result
 
 # ─────────────────────────────────────────────────────────────────────────
