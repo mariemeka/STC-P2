@@ -90,5 +90,41 @@ class TestTempsEcritureFige(unittest.TestCase):
         self.assertEqual(sch.users["u1"].frozen_slot, -1)
 
 
+class TestBorneTempsEcriture(unittest.TestCase):
+    """Bug 'frappe infinie' : si writing_time > n*slot (pas assez de sous-titreurs),
+    les fenêtres d'un même sous-titreur se chevauchent et il n'est jamais au repos.
+    Le temps d'écriture effectif doit être borné à n*slot."""
+
+    def _session(self, n, slot, writing, elapsed):
+        s = Scheduler()
+        for i in range(n):
+            s.add_user(f"u{i}", f"U{i}")
+        s.config.slot_duration = slot
+        s.config.writing_time = writing
+        s.config.is_active = True
+        s.config.start_time = time.time() - elapsed
+        return s
+
+    def test_un_seul_soustitreur_borne_au_slot(self):
+        # n=1, writing 24 >> slot 6 -> borné à 6, le tour avance par slot
+        s = self._session(1, 6, 24, elapsed=7)
+        st = s.get_current_state("u0")
+        self.assertEqual(st["personal_writing_time"], 6)
+        self.assertLessEqual(st["time_left"], 6)
+        self.assertEqual(st["my_slot_index"], 1)  # 2e slot, pas figé sur le 1er
+
+    def test_borne_a_n_fois_slot(self):
+        # n=2, writing 24 > n*slot=16 -> borné à 16
+        s = self._session(2, 8, 24, elapsed=2)
+        st = s.get_current_state("u0")
+        self.assertEqual(st["personal_writing_time"], 16)
+
+    def test_pas_de_borne_si_config_ok(self):
+        # n=2, writing 9 < n*slot=12 -> inchangé (l'overlap voulu est préservé)
+        s = self._session(2, 6, 9, elapsed=2)
+        st = s.get_current_state("u0")
+        self.assertEqual(st["personal_writing_time"], 9)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

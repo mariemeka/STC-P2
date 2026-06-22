@@ -41,7 +41,7 @@
 
 <!-- ── AUDIO SOURCE ─────────────────────────────────────────────────────── -->
 <fieldset>
-  <legend>🔊 Source audio</legend>
+  <legend>Source audio</legend>
   <audio id="audio-player" controls style="width:100%;">
       <source src="/static/media/video.mp4" type="video/mp4">
       Votre navigateur ne supporte pas l'audio.
@@ -63,11 +63,11 @@
   <legend>Paramètres</legend>
   <div class="grid">
     <label>Slot — temps d'écoute (s) :</label>
-    <input type="number" id="slot" value="8" min="1">
+    <input type="number" id="slot" value="6" min="1">
     <label>Temps d'écriture (s) :</label>
-    <input type="number" id="writing_time" value="24" min="1">
+    <input type="number" id="writing_time" value="9" min="1">
     <label>Préavis (s) :</label>
-    <input type="number" id="pre_alert" value="5" min="0">
+    <input type="number" id="pre_alert" value="3" min="0">
     <label>Pools :</label>
     <input type="number" id="pools" value="1" min="1">
     <label>Countdown (s) :</label>
@@ -75,16 +75,16 @@
   </div>
   <div class="help">
     La session tourne tant que vous ne cliquez pas sur Arrêter. Countdown 0 = démarrage immédiat.<br>
-    🎧 <strong>Slot</strong> = durée d'un segment écouté (et durée de chaque sous-titre dans le .srt final).<br>
-    ⌨️ <strong>Temps d'écriture</strong> = durée pendant laquelle un sous-titreur reste actif pour taper son segment (peut être plus long que le slot). Plusieurs sous-titreurs sont alors actifs en parallèle, en relais.<br>
-    ⏰ <strong>Préavis</strong> = combien de secondes avant le début de son tour le sous-titreur est alerté ("Bientôt votre tour"), pour qu'il ait le temps de se préparer avant de devoir taper. Un overlay plein écran apparaît dans les 3 dernières secondes.<br>
-    💡 Pour ne perdre aucun segment, prévoyez au moins <code>temps d'écriture ÷ slot</code> sous-titreurs par pool (ex. écriture 24s / slot 8s → 3 sous-titreurs mini par pool).<br>
-    ✅ <strong>Adaptation dynamique</strong> : le temps d'écriture de chaque sous-titreur s'ajuste automatiquement à sa vitesse de frappe.
+    <strong>Slot</strong> = durée d'un segment écouté (et durée de chaque sous-titre dans le .srt final).<br>
+    <strong>Temps d'écriture</strong> = durée pendant laquelle un sous-titreur reste actif pour taper son segment (peut être plus long que le slot). Plusieurs sous-titreurs sont alors actifs en parallèle, en relais.<br>
+    <strong>Préavis</strong> = combien de secondes avant le début de son tour le sous-titreur est alerté ("Bientôt votre tour"), pour qu'il ait le temps de se préparer avant de devoir taper. Un overlay plein écran apparaît dans les 3 dernières secondes.<br>
+    Pour ne perdre aucun segment ET que le relais tourne (chacun passe la main), prévoyez au moins <code>temps d'écriture ÷ slot</code> sous-titreurs par pool (ex. écriture 9s / slot 6s → 2 sous-titreurs mini par pool). Sans assez de sous-titreurs, ils restent actifs en continu (pas de passage de relais).<br>
+    <strong>Adaptation dynamique</strong> : le temps d'écriture de chaque sous-titreur s'ajuste automatiquement à sa vitesse de frappe.
   </div>
   <div style="margin-top:12px">
-    <button onclick="send('admin_start')">▶ Démarrer</button>
-    <button onclick="send('admin_pause')">⏸ Pause / Reprendre</button>
-    <button onclick="send('admin_stop')">⏹ Arrêter</button>
+    <button onclick="send('admin_start')">Démarrer</button>
+    <button onclick="send('admin_pause')">Pause / Reprendre</button>
+    <button onclick="send('admin_stop')">Arrêter</button>
   </div>
   <div style="margin-top:10px">
     État session : <span id="state-display" class="state-stopped">inactif</span>
@@ -109,10 +109,11 @@
     <tbody><tr><td colspan="6">Aucun</td></tr></tbody>
   </table>
   <div class="help">
-    🟢 Rapide (&ge;1.5 m/s) → écriture +5s &nbsp;|&nbsp;
-    🔴 Lent (&le;0.8 m/s) → écriture -5s &nbsp;|&nbsp;
-    ⚪ Normal → écriture standard
+    Rapide (&ge;1.5 m/s) → écriture +5s &nbsp;|&nbsp;
+    Lent (&le;0.8 m/s) → écriture -5s &nbsp;|&nbsp;
+    Normal → écriture standard
   </div>
+  <div id="st-warning" style="display:none; margin-top:8px; padding:8px 10px; background:#fff3cd; border:1px solid #ffe08a; border-radius:4px; color:#7a5b00; font-size:0.9em;"></div>
 </fieldset>
 
 <!-- ── FLUX TEMPS RÉEL ──────────────────────────────────────────────────── -->
@@ -247,12 +248,33 @@ function renderLiveTyping() {
   ).join('<br>');
 }
 
+function checkEnoughSubtitlers() {
+  const warn = document.getElementById('st-warning');
+  const slot = parseInt(document.getElementById('slot').value) || 6;
+  const writing = parseInt(document.getElementById('writing_time').value) || 9;
+  const needed = Math.ceil(writing / slot);
+  // compte par pool
+  const counts = {};
+  currentUsers.forEach(u => { counts[u.pool] = (counts[u.pool] || 0) + 1; });
+  const shortPools = Object.entries(counts).filter(([p, c]) => c > 0 && c < needed);
+  if (shortPools.length) {
+    const detail = shortPools.map(([p, c]) => `Pool ${p} : ${c}/${needed}`).join(' · ');
+    warn.style.display = 'block';
+    warn.innerHTML = `<b>Pas assez de sous-titreurs</b> pour que le relais tourne `
+      + `(il en faut <b>${needed}</b> par pool pour écriture ${writing}s / slot ${slot}s). `
+      + `${detail}. Avec moins, ils tapent en continu sans passer la main.`;
+  } else {
+    warn.style.display = 'none';
+  }
+}
+
 function renderUsers() {
+  checkEnoughSubtitlers();
   if (!currentUsers.length) {
     userTbody.innerHTML = '<tr><td colspan="6">Aucun</td></tr>';
     return;
   }
-  const baseWriting = parseInt(document.getElementById('writing_time').value) || 24;
+  const baseWriting = parseInt(document.getElementById('writing_time').value) || 9;
 
   userTbody.innerHTML = currentUsers.map(u => {
     const poolOpts = Array.from({length: numPools}, (_, i) =>
@@ -263,8 +285,7 @@ function renderUsers() {
     let speedHtml = '<span class="speed-normal">-</span>';
     if (u.speed && u.speed > 0) {
       const cls = u.speed >= 1.5 ? 'speed-fast' : u.speed <= 0.8 ? 'speed-slow' : 'speed-normal';
-      const icon = u.speed >= 1.5 ? '🟢' : u.speed <= 0.8 ? '🔴' : '⚪';
-      speedHtml = `<span class="${cls}">${icon} ${u.speed} m/s</span>`;
+      speedHtml = `<span class="${cls}">${u.speed} m/s</span>`;
     }
 
     // Affichage temps d'écriture adapté
@@ -308,28 +329,28 @@ function send(type) {
     const countdown = parseInt(document.getElementById('countdown').value) || 0;
     audioPlayer.currentTime = 0;
     if (countdown > 0) {
-      audioStatus.textContent = `⏳ Audio démarre dans ${countdown}s...`;
+      audioStatus.textContent = `Audio démarre dans ${countdown}s...`;
       audioStatus.style.color = "#b87000";
       setTimeout(() => {
         audioPlayer.play()
-          .then(() => { audioStatus.textContent = "🔊 Audio en cours"; audioStatus.style.color = "#2c7a2c"; })
-          .catch(() => { audioStatus.textContent = "⚠️ Cliquez Play sur le player"; audioStatus.style.color = "#d63f00"; addLog("⚠️ Autoplay bloqué — cliquez Play manuellement."); });
+          .then(() => { audioStatus.textContent = "Audio en cours"; audioStatus.style.color = "#2c7a2c"; })
+          .catch(() => { audioStatus.textContent = "Cliquez Play sur le player"; audioStatus.style.color = "#d63f00"; addLog("Autoplay bloqué — cliquez Play manuellement."); });
       }, countdown * 1000);
     } else {
       audioPlayer.play()
-        .then(() => { audioStatus.textContent = "🔊 Audio en cours"; audioStatus.style.color = "#2c7a2c"; })
-        .catch(() => { audioStatus.textContent = "⚠️ Cliquez Play sur le player"; audioStatus.style.color = "#d63f00"; addLog("⚠️ Autoplay bloqué — cliquez Play manuellement."); });
+        .then(() => { audioStatus.textContent = "Audio en cours"; audioStatus.style.color = "#2c7a2c"; })
+        .catch(() => { audioStatus.textContent = "Cliquez Play sur le player"; audioStatus.style.color = "#d63f00"; addLog("Autoplay bloqué — cliquez Play manuellement."); });
     }
   }
 
   if (type === 'admin_pause') {
     if (audioPlayer.paused) {
       audioPlayer.play();
-      audioStatus.textContent = "🔊 Audio en cours";
+      audioStatus.textContent = "Audio en cours";
       audioStatus.style.color = "#2c7a2c";
     } else {
       audioPlayer.pause();
-      audioStatus.textContent = "⏸ Audio en pause";
+      audioStatus.textContent = "Audio en pause";
       audioStatus.style.color = "#b87000";
     }
   }
@@ -337,7 +358,7 @@ function send(type) {
   if (type === 'admin_stop') {
     audioPlayer.pause();
     audioPlayer.currentTime = 0;
-    audioStatus.textContent = "⏹ Audio arrêté";
+    audioStatus.textContent = "Audio arrêté";
     audioStatus.style.color = "#888";
   }
 }

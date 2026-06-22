@@ -4,9 +4,9 @@ from pydantic import BaseModel, computed_field
 
 
 class SessionConfig(BaseModel):
-    slot_duration: int = 8          # "temps d'écoute" : durée d'un segment (utilisée aussi pour le découpage SRT)
-    writing_time: int = 24          # "temps d'écriture" : durée pendant laquelle un sous-titreur peut taper son segment
-    pre_alert: int = 5              # préavis (s) avant le début du tour, pour alerter le sous-titreur en amont
+    slot_duration: int = 6          # "temps d'écoute" : durée d'un segment (utilisée aussi pour le découpage SRT)
+    writing_time: int = 9           # "temps d'écriture" : durée pendant laquelle un sous-titreur peut taper son segment (6s + 3s de rab)
+    pre_alert: int = 3              # préavis (s) avant le début du tour, pour alerter le sous-titreur en amont
     num_pools: int = 1
     countdown: int = 3
     start_time: Optional[float] = None
@@ -220,6 +220,10 @@ class Scheduler:
             n = len(pool_users)
             if n > 0:
                 order = user.order_in_pool
+                # Borne le temps d'écriture à n*slot : au-delà, les fenêtres d'un
+                # MÊME sous-titreur se chevauchent -> il n'est jamais au repos et
+                # tape "à l'infini" (pas assez de sous-titreurs pour le relais).
+                personal_writing_time = min(personal_writing_time, n * slot_dur)
                 # Segment d'écoute le plus récent appartenant à ce sous-titreur
                 # (le plus grand k <= global_slot_index avec k % n == order).
                 k_active = global_slot_index - ((global_slot_index - order) % n)
