@@ -12,9 +12,10 @@ Stratégie :
    niveau mot, avec tolérance si le dernier mot du slot N est un préfixe
    d'un mot du slot N+1.
 """
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from difflib import SequenceMatcher
 from app.core.database import read_session_csvs
+from app.core.spellcheck import is_valid_word
 
 
 def _is_typo_correction(prev: str, new: str) -> bool:
@@ -35,11 +36,53 @@ def _is_typo_correction(prev: str, new: str) -> bool:
     return ratio >= 0.75
 
 
+def _align_to_pivot(pivot_words: List[str], other_words: List[str]) -> List[Optional[str]]:
+    """Aligne other_words sur les positions de pivot_words (None si absent à cette position)."""
+    aligned: List[Optional[str]] = [None] * len(pivot_words)
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, pivot_words, other_words).get_opcodes():
+        if tag == "equal":
+            for k in range(i2 - i1):
+                aligned[i1 + k] = pivot_words[i1 + k]
+        elif tag == "replace":
+            n = min(i2 - i1, j2 - j1)
+            for k in range(n):
+                aligned[i1 + k] = other_words[j1 + k]
+    return aligned
+
+
 def fuse(contributions: List[str]) -> str:
+    """Fusionne par alignement multiple + vote majoritaire (MSA).
+
+    À chaque position, le mot le plus voté gagne. En cas d'égalité,
+    le dictionnaire orthographique départage (le mot valide l'emporte).
+    """
     contributions = [c for c in contributions if c and c.strip()]
     if not contributions:
         return ""
-    return max(contributions, key=len)
+    if len(contributions) == 1:
+        return contributions[0]
+
+    pivot_words = max(contributions, key=len).split()
+    alignments = [_align_to_pivot(pivot_words, c.split()) for c in contributions]
+
+    result = []
+    for i, pivot_word in enumerate(pivot_words):
+        votes: Dict[str, int] = {}
+        for aligned in alignments:
+            w = aligned[i]
+            if w is not None:
+                votes[w] = votes.get(w, 0) + 1
+        if not votes:
+            result.append(pivot_word)
+            continue
+        top_count = max(votes.values())
+        tied = [w for w, c in votes.items() if c == top_count]
+        if len(tied) == 1:
+            result.append(tied[0])
+        else:
+            valid = [w for w in tied if is_valid_word(w)]
+            result.append(valid[0] if valid else pivot_word)
+    return " ".join(result)
 
 
 def merge_user_captions(captions: List[dict]) -> str:
@@ -189,3 +232,29 @@ def fuse_session(session_id: str, num_pools: int) -> Dict[int, List[dict]]:
 
         result[pool_id] = cleaned
     return result
+
+
+def merge_pools_to_timeline(pool_files: Dict[int, List[dict]]) -> List[dict]:
+    """Fusionne toutes les équipes en une seule timeline chronologique.
+
+    Avec le modèle "équipes qui se relaient", chaque pool ne couvre que certains
+    slot_index (différents tours de rotation) — ils ne sont pas des flux
+    indépendants, mais des segments successifs de la MÊME timeline finale.
+    """
+    merged: List[dict] = []
+    for captions in pool_files.values():
+        merged.extend(captions)
+    merged.sort(key=lambda c: c["slot_index"])
+
+    cleaned: List[dict] = []
+    for s in merged:
+        if not s["text"].strip():
+            continue
+        if cleaned:
+            prev_text = cleaned[-1]["text"]
+            _, new_next_text = _dedupe_pair(prev_text, s["text"])
+            if not new_next_text.strip():
+                continue
+            s = dict(s, text=new_next_text)
+        cleaned.append(s)
+    return cleaned

@@ -4,41 +4,27 @@ import uuid
 import os
 import asyncio
 from typing import Dict
-from symspellpy import SymSpell, Verbosity
+from symspellpy import Verbosity
 from pygrammalecte import grammalecte_text, GrammalecteGrammarMessage
-import unicodedata
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 
-from app.logic.scheduler import Scheduler
-from app.logic.fusion import fuse_session
+from app.logic.scheduler import Scheduler, ADMIN_ID
+from app.logic.fusion import fuse_session, merge_pools_to_timeline
 from app.engine.formatter import to_srt, to_txt
 from app.core.database import save_caption_to_csv
 from app.core.models import Caption
+from app.core.spellcheck import sym as _sym, dict_loaded as _dict_loaded, accent_map as _accent_map
 
 app = FastAPI()
 
 if not os.path.exists("data"):
     os.makedirs("data")
 
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "stc2026")
+
 # ── Correction orthographique ─────────────────────────────────────────────
-
-def _strip_accents(s: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
-
-_sym = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
-_dict_loaded = False
-if os.path.exists("fr-100k.txt"):
-    _sym.load_dictionary("fr-100k.txt", term_index=0, count_index=1, encoding="utf-8")
-    _dict_loaded = True
-
-_accent_map: dict = {}
-if _dict_loaded:
-    for entry in _sym.words.keys():
-        stripped = _strip_accents(entry)
-        if stripped != entry and stripped not in _accent_map:
-            _accent_map[stripped] = entry
 
 # Types de règles grammalecte qu'on garde (accords, participes passés...)
 _GRAM_SAFE_TYPES = {"conj", "gn", "ppas"}
@@ -150,14 +136,22 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 scheduler = Scheduler()
 connections: Dict[str, WebSocket] = {}
 viewers: Dict[str, WebSocket] = {}
+# Onglets admin : tous partagent le même user_id "admin_master" côté logique,
+# mais chaque connexion a besoin de sa propre entrée pour recevoir les broadcasts
+# (sinon un nouvel onglet écrase l'ancien dans `connections` et celui-ci ne reçoit
+# plus rien).
+admin_connections: Dict[str, WebSocket] = {}
 session_id = "live_session"
 last_live_save: Dict[tuple, float] = {}
 LIVE_SAVE_THROTTLE = 1.0
 
 # ─── ROUTES HTTP ──────────────────────────────────────────────────────────
 
+current_audio_url = "/static/media/audio.mp3"
+
 @app.post("/upload-audio")
 async def upload_audio(file: UploadFile = File(...)):
+    global current_audio_url
     allowed = {".mp4", ".mp3", ".wav", ".ogg", ".webm"}
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in allowed:
@@ -166,7 +160,12 @@ async def upload_audio(file: UploadFile = File(...)):
     dest = f"static/media/audio{ext}"
     with open(dest, "wb") as f:
         f.write(await file.read())
-    return JSONResponse({"url": f"/static/media/audio{ext}"})
+    current_audio_url = f"/static/media/audio{ext}"
+    return JSONResponse({"url": current_audio_url})
+
+@app.get("/current-audio")
+async def get_current_audio():
+    return JSONResponse({"url": current_audio_url})
 
 @app.get("/")
 async def get_index():
@@ -202,6 +201,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     user_id = None
     is_viewer = False
+    admin_conn_key = None
 
     try:
         while True:
@@ -222,8 +222,16 @@ async def websocket_endpoint(websocket: WebSocket):
             elif t == "join":
                 user_id = msg.get("user_id") or str(uuid.uuid4())[:8]
                 username = msg.get("username", "Anonyme")
+                if user_id == ADMIN_ID and msg.get("password") != ADMIN_PASSWORD:
+                    await websocket.send_json({"type": "auth_error"})
+                    user_id = None
+                    continue
                 user = scheduler.add_user(user_id, username)
-                connections[user_id] = websocket
+                if user_id == ADMIN_ID:
+                    admin_conn_key = str(uuid.uuid4())[:8]
+                    admin_connections[admin_conn_key] = websocket
+                else:
+                    connections[user_id] = websocket
                 await websocket.send_json({
                     "type": "welcome",
                     "user_id": user_id,
@@ -233,14 +241,31 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
                 await broadcast_user_list()
 
+            elif t == "admin_audio_duration":
+                duration = msg.get("duration")
+                scheduler.config.audio_duration = float(duration) if duration else None
+                scheduler._auto_distribute()
+                await broadcast_user_list()
+
+            elif t == "admin_set_params":
+                scheduler.set_config(
+                    slot_dur=int(msg.get("slot", scheduler.config.slot_duration)),
+                    overlap=int(msg.get("overlap", scheduler.config.overlap_duration)),
+                    countdown=int(msg.get("countdown", scheduler.config.countdown)),
+                )
+                await broadcast_user_list()
+                await broadcast_state("sync_update")
+
             elif t == "admin_start":
                 global session_id
                 session_id = f"sess_{int(time.time())}"
                 last_live_save.clear()
+                audio_duration = msg.get("audio_duration")
+                if audio_duration:
+                    scheduler.config.audio_duration = float(audio_duration)
                 scheduler.set_config(
                     slot_dur=int(msg.get("slot", 20)),
                     overlap=int(msg.get("overlap", 5)),
-                    pools=int(msg.get("pools", 1)),
                     countdown=int(msg.get("countdown", 3)),
                 )
                 scheduler.config.start_time = time.time() + scheduler.config.countdown
@@ -248,6 +273,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 scheduler.config.is_paused = False
                 scheduler.config.total_paused_time = 0.0
                 scheduler.config.paused_at = None
+                scheduler.config.rotation_index = 0
+                scheduler.config.turn_start = 0.0
+                scheduler.config.turn_deadline = scheduler.config.slot_duration
                 await broadcast_state("session_started")
 
             elif t == "admin_pause":
@@ -303,11 +331,14 @@ async def websocket_endpoint(websocket: WebSocket):
                         corrected_live = correct_text(text, final=False)
 
                         # ── Mesure vitesse de frappe + adaptation ─────────
+                        # On mesure depuis le 1er caractère réellement tapé CE tour,
+                        # pas depuis le début du tour (le temps de réflexion ne compte pas).
                         nb_mots = len(text.split()) if text.strip() else 0
                         elapsed = state.get("elapsed", 1)
-                        cycle_time = max(1, scheduler.config.slot_duration - scheduler.config.overlap_duration)
-                        temps_dans_slot = elapsed % cycle_time
-                        if temps_dans_slot > 0 and nb_mots > 0:
+                        if nb_mots > 0 and user.typing_start < 0:
+                            user.typing_start = elapsed
+                        temps_dans_slot = elapsed - user.typing_start if user.typing_start >= 0 else 0
+                        if temps_dans_slot >= 1.0 and nb_mots > 0:
                             vitesse = round(nb_mots / temps_dans_slot, 2)
                             scheduler.update_typing_speed(user_id, vitesse)
                             await broadcast_user_list()  # mise à jour admin
@@ -341,7 +372,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
 
     except WebSocketDisconnect:
-        if user_id:
+        if admin_conn_key:
+            admin_connections.pop(admin_conn_key, None)
+        elif user_id:
             connections.pop(user_id, None)
             viewers.pop(user_id, None)
             scheduler.remove_user(user_id)
@@ -361,11 +394,30 @@ async def sync_loop():
         await asyncio.sleep(0.5)
         tick += 1
         if scheduler.config.is_active:
+            cfg = scheduler.config
+            if cfg.audio_duration and cfg.start_time and not cfg.is_paused:
+                elapsed = time.time() - cfg.start_time - cfg.total_paused_time
+                if elapsed >= cfg.audio_duration:
+                    # Audio terminé : on laisse l'équipe en cours finir son tour
+                    # réel (turn_deadline peut avoir été prolongée dynamiquement)
+                    # avant d'arrêter, plutôt que de couper en plein milieu.
+                    scheduler.get_current_state()  # met à jour turn_deadline si besoin
+                    if elapsed >= cfg.turn_deadline:
+                        await stop_and_export()
+                        continue
             for uid, ws in list(connections.items()):
                 try:
                     await ws.send_json({
                         "type": "sync_update",
                         "state": scheduler.get_current_state(uid)
+                    })
+                except Exception:
+                    pass
+            for ws in list(admin_connections.values()):
+                try:
+                    await ws.send_json({
+                        "type": "sync_update",
+                        "state": scheduler.get_current_state(ADMIN_ID)
                     })
                 except Exception:
                     pass
@@ -378,7 +430,7 @@ async def sync_loop():
                 except Exception:
                     pass
         elif tick % 60 == 0:
-            for ws in list(connections.values()) + list(viewers.values()):
+            for ws in list(connections.values()) + list(viewers.values()) + list(admin_connections.values()):
                 try:
                     await ws.send_json({"type": "ping"})
                 except Exception:
@@ -388,9 +440,12 @@ async def stop_and_export():
         return
     scheduler.config.is_active = False
     pool_files = fuse_session(session_id, scheduler.config.num_pools)
+    # Les équipes se relaient sur UNE seule timeline (pas des flux indépendants) :
+    # on fusionne tout en un seul export, chronologique.
+    captions = merge_pools_to_timeline(pool_files)
     exports = []
-    for pool_id, captions in pool_files.items():
 
+    if captions:
         # ── Correction post-fusion sur le texte final complet ─────────
         texte_complet = " ".join(c["text"] for c in captions if c["text"].strip())
         texte_corrige = correct_text(texte_complet, final=True)
@@ -402,8 +457,8 @@ async def stop_and_export():
             caption["text"] = " ".join(mots[debut:fin])
         # ─────────────────────────────────────────────────────────────
 
-        srt_path = os.path.join("data", f"{session_id}_pool_{pool_id}.srt")
-        txt_path = os.path.join("data", f"{session_id}_pool_{pool_id}.txt")
+        srt_path = os.path.join("data", f"{session_id}.srt")
+        txt_path = os.path.join("data", f"{session_id}.txt")
         with open(srt_path, "w", encoding="utf-8") as f:
             f.write(to_srt(captions, scheduler.config.slot_duration))
         with open(txt_path, "w", encoding="utf-8") as f:
@@ -437,6 +492,14 @@ async def broadcast_state(event_type: str):
             })
         except Exception:
             pass
+    for ws in list(admin_connections.values()):
+        try:
+            await ws.send_json({
+                "type": event_type,
+                "state": scheduler.get_current_state(ADMIN_ID)
+            })
+        except Exception:
+            pass
     for vid, ws in list(viewers.items()):
         try:
             await ws.send_json({
@@ -447,7 +510,7 @@ async def broadcast_state(event_type: str):
             pass
 
 async def broadcast(data: dict):
-    for ws in list(connections.values()) + list(viewers.values()):
+    for ws in list(connections.values()) + list(viewers.values()) + list(admin_connections.values()):
         try:
             await ws.send_json(data)
         except Exception:
@@ -459,9 +522,8 @@ async def broadcast_to_viewers(data: dict):
             await ws.send_json(data)
         except Exception:
             pass
-    admin_ws = connections.get("admin_master")
-    if admin_ws:
+    for ws in list(admin_connections.values()):
         try:
-            await admin_ws.send_json(data)
+            await ws.send_json(data)
         except Exception:
             pass

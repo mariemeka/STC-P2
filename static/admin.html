@@ -1,128 +1,200 @@
-
 <!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
 <title>STC - Admin</title>
 <style>
-  body { font-family: monospace; margin: 20px; max-width: 1100px; }
-  fieldset { margin-bottom: 15px; }
-  input { font: inherit; padding: 4px; width: 80px; }
-  button { font: inherit; padding: 6px 12px; margin-right: 6px; }
-  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
-  th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; vertical-align: middle; }
-  select, .reassign-btn { font: inherit; padding: 2px 6px; }
-  #log { background: #111; color: #0f0; padding: 10px; height: 300px; overflow-y: auto; font-size: 0.9rem; }
-  .files a { display: block; padding: 2px 0; }
-  .state-running { color: #2c7a2c; font-weight: bold; }
-  .state-countdown { color: #d63f00; font-weight: bold; }
-  .state-paused { color: #b87000; font-weight: bold; }
-  .state-stopped { color: #888; }
-  .grid { display: grid; grid-template-columns: 100px 80px; gap: 6px; align-items: center; max-width: 220px; }
-  .help { color: #666; font-size: 0.85em; }
-  #audio-status { font-weight: bold; margin-left: 10px; }
-  .speed-fast { color: #2c7a2c; font-weight: bold; }
-  .speed-slow { color: #d63f00; font-weight: bold; }
-  .speed-normal { color: #888; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif; margin: 0;
+    background: radial-gradient(circle at 50% 0%, #1a2030 0%, #0b0e13 60%);
+    color: #e6e6e6;
+  }
+
+  /* ── Header ───────────────────────────────────────────────────────── */
+  header {
+    background: #14181f; border-bottom: 2px solid #ff3b3b;
+    padding: 14px 28px; display: flex; justify-content: space-between; align-items: center;
+  }
+  header .logo { font-weight: bold; letter-spacing: 1px; }
+  header .logo .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #ff3b3b; margin-right: 8px; animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+  header nav a { color: #aab2c0; text-decoration: none; margin-left: 22px; font-size: 0.88rem; }
+  header nav a:hover { color: #ff8a8a; }
+
+  .container { max-width: 880px; margin: 0 auto; padding: 28px 20px; display: flex; flex-direction: column; gap: 20px; }
+  .card {
+    background: #14181f; border: 1px solid #2a3140; border-radius: 12px;
+    padding: 22px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  }
+  .card h3 { margin: 0 0 16px; font-size: 0.95rem; color: #ff8a8a; letter-spacing: 0.5px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .meta { color: #6b7280; font-size: 0.8rem; }
+
+  button { background: #ff3b3b; color: white; border: none; border-radius: 6px; padding: 9px 18px;
+           font-weight: bold; cursor: pointer; font-size: 0.85rem; transition: background 0.15s; }
+  button:hover { background: #ff5252; }
+  button.secondary { background: #1f2530; border: 1px solid #3a4150; }
+  button.secondary:hover { background: #262d3b; }
+  input, select { background: #1f2530; color: white; border: 1px solid #3a4150; border-radius: 6px; padding: 7px 10px; font: inherit; }
+  input:focus, select:focus { outline: none; border-color: #ff3b3b; }
+  input[type=number] { width: 64px; }
+
+  .pill { padding: 5px 12px; border-radius: 4px; font-size: 0.78rem; }
+  .pill-live { background: #ff3b3b; color: white; font-weight: bold; letter-spacing: 1px; }
+  .pill-idle { background: #1f2530; color: #aab2c0; }
+  .pill-paused { background: #b87000; color: white; font-weight: bold; }
+
+  /* ── Paramètres ───────────────────────────────────────────────────── */
+  .params-grid { display: flex; gap: 18px; margin-bottom: 14px; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 5px; font-size: 0.78rem; color: #aab2c0; }
+
+  /* ── Audio ────────────────────────────────────────────────────────── */
+  .file-btn { display: inline-block; cursor: pointer; padding: 8px 14px; border-radius: 6px;
+              background: #1f2530; border: 1px solid #3a4150; font-size: 0.85rem; }
+  audio { width: 100%; margin-top: 12px; }
+
+  /* ── Gantt ────────────────────────────────────────────────────────── */
+  .gantt-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .gantt-label { width: 80px; font-size: 0.78rem; color: #aab2c0; flex-shrink: 0; }
+  .gantt-track { position: relative; flex: 1; height: 26px; background: #0b0e13; border-radius: 4px; overflow: hidden; }
+  .gantt-block { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; opacity: 0.85; }
+  .gantt-axis { display: flex; justify-content: space-between; font-size: 0.7rem; color: #555; margin-top: 4px; padding-left: 90px; }
+  .gantt-now { position: absolute; top: -2px; bottom: -2px; width: 2px; background: white; }
+  .gantt-empty { color: #555; font-style: italic; font-size: 0.85rem; }
+
+  /* ── Table users ──────────────────────────────────────────────────── */
+  table { width: 100%; font-size: 0.85rem; border-collapse: collapse; }
+  th { text-align: left; color: #6b7280; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 6px 8px; }
+  td { padding: 8px; border-top: 1px solid #1f2530; }
+  .speed-fast { color: #2e9e5b; }
+  .speed-slow { color: #ff3b3b; }
+  .speed-normal { color: #aab2c0; }
+
+  /* ── Log ──────────────────────────────────────────────────────────── */
+  #log { background: #0b0e13; border-radius: 6px; padding: 10px; height: 160px; overflow-y: auto;
+         font-family: 'Consolas', monospace; font-size: 0.78rem; color: #8fd98f; }
+  #live-area { background: #0b0e13; border-radius: 6px; padding: 10px; min-height: 1.8rem;
+               font-size: 0.85rem; color: #aab2c0; margin-bottom: 10px; }
+
+  .files a { display: block; color: #6ea8ff; padding: 3px 0; font-size: 0.85rem; text-decoration: none; }
+  .files a:hover { text-decoration: underline; }
+
+  #auth-overlay {
+    position: fixed; inset: 0; background: rgba(10,10,10,0.95);
+    z-index: 9999; display: flex; align-items: center; justify-content: center;
+  }
+  #auth-overlay.hidden { display: none; }
+  #auth-box { background: #14181f; border: 1px solid #2a3140; border-radius: 12px; padding: 30px;
+              width: 300px; text-align: center; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+  #auth-box input { width: 100%; margin: 10px 0; box-sizing: border-box; }
+  #auth-box button { width: 100%; }
+  #auth-error { color: #ff3b3b; font-size: 0.85em; min-height: 1.2em; margin-top: 6px; }
 </style>
 </head>
 <body>
 
-<h2>STC - Console Admin</h2>
+<div id="auth-overlay">
+  <div id="auth-box">
+    <h3 style="margin-top:0">Console Admin</h3>
+    <p style="font-size:0.85em;color:#6b7280">Accès protégé</p>
+    <input type="password" id="auth-password" placeholder="Mot de passe" autocomplete="off"
+           onkeydown="if(event.key==='Enter') submitPassword()">
+    <button onclick="submitPassword()">Se connecter</button>
+    <div id="auth-error"></div>
+  </div>
+</div>
 
-<!-- ── RACCOURCIS ───────────────────────────────────────────────────────── -->
-<fieldset>
-  <legend>Raccourcis</legend>
-  <button onclick="window.open('/', '_blank')">Ouvrir un sous-titreur</button>
-  <button onclick="window.open('/viewer', '_blank')">Ouvrir le viewer</button>
-  <button onclick="window.open('/results', '_blank')">Voir les résultats</button>
-  <span class="help">S'ouvrent dans un nouvel onglet.</span>
-</fieldset>
+<header>
+  <div class="logo"><span class="live-dot"></span>STC — Console Admin</div>
+  <nav>
+    <a href="/" target="_blank">Sous-titreur ↗</a>
+    <a href="/viewer" target="_blank">Viewer ↗</a>
+    <a href="/results" target="_blank">Résultats ↗</a>
+  </nav>
+</header>
 
-<!-- ── AUDIO SOURCE ─────────────────────────────────────────────────────── -->
-<fieldset>
-  <legend>🔊 Source audio</legend>
-  <audio id="audio-player" controls style="width:100%;">
-      <source src="/static/media/video.mp4" type="video/mp4">
+<div class="container">
+
+  <!-- Contrôle de session -->
+  <div class="card">
+    <h3>Contrôle de session</h3>
+    <div class="row" style="justify-content:space-between">
+      <div class="row">
+        <button onclick="send('admin_start')">▶ Démarrer</button>
+        <button class="secondary" onclick="send('admin_pause')">⏸ Pause / Reprendre</button>
+        <button class="secondary" onclick="send('admin_stop')">⏹ Arrêter</button>
+      </div>
+      <span id="state-display" class="pill pill-idle">inactif</span>
+    </div>
+    <div class="meta" id="audio-status" style="margin-top:10px"></div>
+  </div>
+
+  <!-- Paramètres -->
+  <div class="card">
+    <h3>Paramètres</h3>
+    <div class="params-grid">
+      <div class="field">Slot (s)<input type="number" id="slot" value="8" min="3"></div>
+      <div class="field">Overlap (s)<input type="number" id="overlap" value="2" min="0"></div>
+      <div class="field">Countdown (s)<input type="number" id="countdown" value="3" min="0"></div>
+    </div>
+    <button class="secondary" onclick="applyParams()">Appliquer les paramètres</button>
+    <div class="meta" style="margin-top:10px">
+      Le slot de chaque sous-titreur s'adapte ensuite automatiquement à sa vitesse de frappe
+      (durée de base × 2,5 mots/sec ÷ vitesse mesurée).
+    </div>
+  </div>
+
+  <!-- Audio -->
+  <div class="card">
+    <h3>Source audio</h3>
+    <div class="row">
+      <input type="file" id="audio-file-input" accept="audio/*,video/mp4,video/webm" style="display:none;"
+             onchange="document.getElementById('audio-file-name').textContent = this.files[0]?.name || 'Aucun fichier';">
+      <label for="audio-file-input" class="file-btn">Choisir un fichier</label>
+      <span class="meta" id="audio-file-name">Aucun fichier sélectionné</span>
+      <button class="secondary" onclick="uploadAudio()">Charger</button>
+      <span class="meta" id="upload-status"></span>
+    </div>
+    <audio id="audio-player" controls>
+      <source src="/static/media/audio.mp3" type="audio/mpeg">
       Votre navigateur ne supporte pas l'audio.
-  </audio>
-  <div style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-    <input type="file" id="audio-file-input" accept="audio/*,video/mp4,video/webm" style="display:none;" onchange="document.getElementById('audio-file-name').textContent = this.files[0]?.name || 'Aucun fichier';">
-    <label for="audio-file-input" style="cursor:pointer; padding:4px 10px; border:1px solid #aaa; border-radius:4px; background:#f5f5f5; font-size:0.9em;">Choisir un fichier</label>
-    <span id="audio-file-name" style="font-size:0.85em; color:#555;">Aucun fichier sélectionné</span>
-    <button onclick="uploadAudio()" style="padding:4px 10px;">Charger</button>
-    <span id="upload-status" style="font-size:0.85em;"></span>
+    </audio>
   </div>
-  <div class="help" style="margin-top:8px;">
-    L'audio se lance automatiquement quand vous cliquez sur <strong>Démarrer</strong> (après le countdown).<br>
-  </div>
-</fieldset>
 
-<!-- ── PARAMÈTRES ───────────────────────────────────────────────────────── -->
-<fieldset>
-  <legend>Paramètres</legend>
-  <div class="grid">
-    <label>Slot (s) :</label>
-    <input type="number" id="slot" value="20" min="5">
-    <label>Overlap (s) :</label>
-    <input type="number" id="overlap" value="5" min="0">
-    <label>Pools :</label>
-    <input type="number" id="pools" value="1" min="1">
-    <label>Countdown (s) :</label>
-    <input type="number" id="countdown" value="3" min="0">
+  <!-- Gantt -->
+  <div class="card">
+    <h3>Répartition des équipes sur l'audio</h3>
+    <div id="gantt-container"><div class="gantt-empty">Charge un audio pour voir la répartition prévisionnelle.</div></div>
+    <div class="meta" style="margin-top:10px">Le trait blanc indique la position actuelle une fois la session démarrée.</div>
   </div>
-  <div class="help">
-    La session tourne tant que vous ne cliquez pas sur Arrêter. Countdown 0 = démarrage immédiat.<br>
-    ✅ <strong>Adaptation dynamique</strong> : le slot de chaque sous-titreur s'ajuste automatiquement à sa vitesse de frappe.
-  </div>
-  <div style="margin-top:12px">
-    <button onclick="send('admin_start')">▶ Démarrer</button>
-    <button onclick="send('admin_pause')">⏸ Pause / Reprendre</button>
-    <button onclick="send('admin_stop')">⏹ Arrêter</button>
-  </div>
-  <div style="margin-top:10px">
-    État session : <span id="state-display" class="state-stopped">inactif</span>
-    <span id="audio-status" style="color:#888; font-size:0.85em;"></span>
-  </div>
-</fieldset>
 
-<!-- ── UTILISATEURS ─────────────────────────────────────────────────────── -->
-<fieldset>
-  <legend>Utilisateurs connectés — <span id="nb-users">0</span> sous-titreur(s)</legend>
-  <table id="user-table">
-    <thead>
-      <tr>
-        <th>Nom</th>
-        <th>Pool</th>
-        <th>Position</th>
-        <th>Vitesse</th>
-        <th>Slot adapté</th>
-        <th>Réassigner</th>
-      </tr>
-    </thead>
-    <tbody><tr><td colspan="6">Aucun</td></tr></tbody>
-  </table>
-  <div class="help">
-    🟢 Rapide (&ge;1.5 m/s) → slot +5s &nbsp;|&nbsp;
-    🔴 Lent (&le;0.8 m/s) → slot -5s &nbsp;|&nbsp;
-    ⚪ Normal → slot standard
+  <!-- Utilisateurs -->
+  <div class="card">
+    <h3>Sous-titreurs connectés — <span id="nb-users">0</span></h3>
+    <table id="user-table">
+      <thead>
+        <tr><th>Nom</th><th>Équipe</th><th>Vitesse</th><th>Slot adapté</th><th>Réassigner</th></tr>
+      </thead>
+      <tbody><tr><td colspan="6" class="meta">Aucun</td></tr></tbody>
+    </table>
   </div>
-</fieldset>
 
-<!-- ── FLUX TEMPS RÉEL ──────────────────────────────────────────────────── -->
-<fieldset>
-  <legend>Flux temps réel</legend>
-  <div id="live-area" style="min-height:1.6rem;padding:4px 8px;background:#f0f4ff;border:1px solid #c8d4f0;margin-bottom:6px;font-size:0.9rem;color:#555">
-    <em>Aucune frappe en cours.</em>
+  <!-- Flux temps réel + Journal -->
+  <div class="card">
+    <h3>Activité en direct</h3>
+    <div id="live-area"><em>Aucune frappe en cours.</em></div>
+    <div id="log">En attente...</div>
   </div>
-  <div id="log">En attente...</div>
-</fieldset>
 
-<!-- ── FICHIERS EXPORTÉS ────────────────────────────────────────────────── -->
-<fieldset>
-  <legend>Fichiers exportés</legend>
-  <div class="files" id="files">(rien encore)</div>
-</fieldset>
+  <!-- Fichiers -->
+  <div class="card">
+    <h3>Fichiers exportés</h3>
+    <div class="files" id="files"><span class="meta">(rien encore)</span></div>
+  </div>
+
+</div>
 
 <script>
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -133,6 +205,31 @@ const stateDisplay = document.getElementById('state-display');
 const filesDiv = document.getElementById('files');
 const audioPlayer = document.getElementById('audio-player');
 const audioStatus = document.getElementById('audio-status');
+const liveArea = document.getElementById('live-area');
+const ganttContainer = document.getElementById('gantt-container');
+
+let currentUsers = [];
+let numPools = 1;
+let liveTypers = {};
+let wsReady = false;
+
+audioPlayer.addEventListener('loadedmetadata', () => {
+  if (audioPlayer.duration && isFinite(audioPlayer.duration) && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'admin_audio_duration', duration: audioPlayer.duration }));
+  }
+  renderGantt();
+});
+document.getElementById('slot').addEventListener('input', renderGantt);
+document.getElementById('overlap').addEventListener('input', renderGantt);
+
+// Récupère le dernier fichier audio chargé (survit à un rechargement de page,
+// contrairement au <source> codé en dur qui revenait toujours à video.mp4).
+fetch('/current-audio').then(r => r.json()).then(data => {
+  if (data.url) {
+    audioPlayer.src = data.url;
+    audioPlayer.load();
+  }
+}).catch(() => {});
 
 async function uploadAudio() {
   const input = document.getElementById('audio-file-input');
@@ -140,36 +237,51 @@ async function uploadAudio() {
   if (!input.files.length) { status.textContent = "Aucun fichier sélectionné."; return; }
   const formData = new FormData();
   formData.append('file', input.files[0]);
-  status.textContent = "Envoi en cours..."; status.style.color = "#b87000";
+  status.textContent = "Envoi en cours..."; status.style.color = "#d99a1a";
   try {
     const res = await fetch('/upload-audio', { method: 'POST', body: formData });
     const data = await res.json();
     if (data.url) {
       audioPlayer.src = data.url + '?t=' + Date.now();
       audioPlayer.load();
-      status.textContent = "Fichier chargé."; status.style.color = "#2c7a2c";
+      status.textContent = "Fichier chargé."; status.style.color = "#2e9e5b";
     } else {
-      status.textContent = data.error || "Erreur."; status.style.color = "#d63f00";
+      status.textContent = data.error || "Erreur."; status.style.color = "#ff3b3b";
     }
-  } catch(e) {
-    status.textContent = "Erreur réseau."; status.style.color = "#d63f00";
+  } catch (e) {
+    status.textContent = "Erreur réseau."; status.style.color = "#ff3b3b";
   }
 }
-const liveArea = document.getElementById('live-area');
-let currentUsers = [];
-let numPools = 1;
-let liveTypers = {};
 
 ws.onopen = () => {
-  addLog("Connecté.");
-  ws.send(JSON.stringify({ type: "join", username: "ADMIN", user_id: "admin_master" }));
+  addLog("Connecté. En attente d'authentification...");
+  wsReady = true;
 };
+
+function submitPassword() {
+  const pwd = document.getElementById('auth-password').value;
+  if (!wsReady) {
+    document.getElementById('auth-error').textContent = "Connexion au serveur en cours, réessaie dans un instant.";
+    return;
+  }
+  ws.send(JSON.stringify({ type: "join", username: "ADMIN", user_id: "admin_master", password: pwd }));
+}
 
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
 
   if (data.type === "welcome") {
+    document.getElementById('auth-overlay').classList.add('hidden');
+    addLog("Authentifié.");
+    if (audioPlayer.duration && isFinite(audioPlayer.duration)) {
+      ws.send(JSON.stringify({ type: 'admin_audio_duration', duration: audioPlayer.duration }));
+    }
     if (data.state) updateStateDisplay(data.state);
+    renderGantt();
+  }
+
+  if (data.type === "auth_error") {
+    document.getElementById('auth-error').textContent = "Mot de passe incorrect.";
   }
 
   if (data.type === "user_update") {
@@ -181,12 +293,18 @@ ws.onmessage = (event) => {
   if (data.type === "sync_update" || data.type === "session_started" || data.type === "session_paused") {
     const s = data.state;
     numPools = (s.config && s.config.num_pools) || numPools;
+    if (s.config) {
+      document.getElementById('slot').value = s.config.slot_duration;
+      document.getElementById('overlap').value = s.config.overlap_duration;
+    }
     updateStateDisplay(s);
+    syncAudioToSession(s);
     renderUsers();
+    renderGantt(s.elapsed || 0);
   }
 
   if (data.type === "new_text") {
-    addLog(`[P${data.pool} | slot ${data.slot_index}] ${data.user} : ${escapeHtml(data.text)}`);
+    addLog(`[Équipe ${data.pool} | slot ${data.slot_index}] ${data.user} : ${escapeHtml(data.text)}`);
     delete liveTypers[data.user];
     renderLiveTyping();
   }
@@ -203,7 +321,7 @@ ws.onmessage = (event) => {
   if (data.type === "session_ended") {
     addLog("SESSION TERMINÉE.");
     stateDisplay.innerText = "terminée";
-    stateDisplay.className = "state-stopped";
+    stateDisplay.className = "pill pill-idle";
     liveTypers = {};
     renderLiveTyping();
     if (data.files && data.files.length) {
@@ -217,16 +335,35 @@ ws.onmessage = (event) => {
 function updateStateDisplay(s) {
   if (!s.active) {
     stateDisplay.innerText = "inactif";
-    stateDisplay.className = "state-stopped";
+    stateDisplay.className = "pill pill-idle";
   } else if (s.countdown && s.countdown > 0) {
     stateDisplay.innerText = `COUNTDOWN ${s.countdown}`;
-    stateDisplay.className = "state-countdown";
+    stateDisplay.className = "pill pill-paused";
   } else if (s.paused) {
     stateDisplay.innerText = "EN PAUSE";
-    stateDisplay.className = "state-paused";
+    stateDisplay.className = "pill pill-paused";
   } else {
-    stateDisplay.innerText = `actif — slot ${s.slot_index} — ${s.time_left}s restantes`;
-    stateDisplay.className = "state-running";
+    stateDisplay.innerText = `● ACTIF — slot ${s.slot_index} — ${s.time_left}s restantes`;
+    stateDisplay.className = "pill pill-live";
+  }
+}
+
+// Synchronise le lecteur audio sur l'état RÉEL de la session (pas une supposition
+// locale au moment du clic) — évite tout désync entre session et audio.
+function syncAudioToSession(s) {
+  // s.elapsed n'existe que si la phase de countdown initiale est terminée
+  // (l'admin n'étant dans aucune équipe, son propre "countdown" vaut toujours 0,
+  // donc on ne peut pas se fier à ce champ seul pour savoir si on est démarré).
+  const stillCountingDown = s.elapsed === undefined;
+  const shouldPlay = s.active && !s.paused && !stillCountingDown && !(s.countdown && s.countdown > 0);
+  if (shouldPlay && audioPlayer.paused) {
+    audioPlayer.play()
+      .then(() => { audioStatus.textContent = "🔊 Audio en cours"; audioStatus.style.color = "#2e9e5b"; })
+      .catch(() => { audioStatus.textContent = "⚠️ Clique Play sur le lecteur."; audioStatus.style.color = "#ff3b3b"; });
+  } else if (!shouldPlay && !audioPlayer.paused) {
+    audioPlayer.pause();
+    audioStatus.textContent = s.paused ? "⏸ Audio en pause" : "⏹ Audio arrêté";
+    audioStatus.style.color = "#d99a1a";
   }
 }
 
@@ -237,23 +374,25 @@ function renderLiveTyping() {
     return;
   }
   liveArea.innerHTML = entries.map(([user, d]) =>
-    `<span style="color:#1a73e8;font-weight:bold">${escapeHtml(user)}</span> [P${d.pool}] : <span style="color:#333">${escapeHtml(d.text)}</span>▌`
+    `<span style="color:#ff8a8a;font-weight:bold">${escapeHtml(user)}</span> [Équipe ${d.pool}] : ${escapeHtml(d.text)}▌`
   ).join('<br>');
 }
 
 function renderUsers() {
   if (!currentUsers.length) {
-    userTbody.innerHTML = '<tr><td colspan="6">Aucun</td></tr>';
+    userTbody.innerHTML = '<tr><td colspan="6" class="meta">Aucun</td></tr>';
     return;
   }
-  const baseSlot = parseInt(document.getElementById('slot').value) || 20;
+  const baseSlot = parseInt(document.getElementById('slot').value) || 6;
+  // Avant le démarrage, sync_update ne contient pas "config" donc numPools peut être
+  // périmé : on se base aussi sur les équipes réellement observées chez les users.
+  const effectivePools = Math.max(numPools, ...currentUsers.map(u => u.pool), 1);
 
   userTbody.innerHTML = currentUsers.map(u => {
-    const poolOpts = Array.from({length: numPools}, (_, i) =>
-      `<option value="${i+1}" ${u.pool === i+1 ? 'selected' : ''}>Pool ${i+1}</option>`
+    const poolOpts = Array.from({length: effectivePools}, (_, i) =>
+      `<option value="${i+1}" ${u.pool === i+1 ? 'selected' : ''}>Équipe ${i+1}</option>`
     ).join('');
 
-    // Affichage vitesse avec couleur
     let speedHtml = '<span class="speed-normal">-</span>';
     if (u.speed && u.speed > 0) {
       const cls = u.speed >= 1.5 ? 'speed-fast' : u.speed <= 0.8 ? 'speed-slow' : 'speed-normal';
@@ -261,85 +400,107 @@ function renderUsers() {
       speedHtml = `<span class="${cls}">${icon} ${u.speed} m/s</span>`;
     }
 
-    // Affichage slot adapté
     const slotAdapt = u.personal_slot || baseSlot;
-    const slotColor = slotAdapt > baseSlot ? '#2c7a2c' : slotAdapt < baseSlot ? '#d63f00' : '#888';
-    const slotHtml = `<span style="color:${slotColor};font-weight:bold">${slotAdapt}s</span>`;
+    const slotCls = slotAdapt > baseSlot ? 'speed-fast' : slotAdapt < baseSlot ? 'speed-slow' : 'speed-normal';
 
     return `
       <tr>
         <td>${escapeHtml(u.name)}</td>
-        <td>${u.pool}</td>
-        <td>${u.order}</td>
+        <td>Équipe ${u.pool}</td>
         <td>${speedHtml}</td>
-        <td>${slotHtml}</td>
+        <td><span class="${slotCls}">${slotAdapt}s</span></td>
         <td>
-          <label style="font-size:0.85em;color:#666">Pool :</label>
           <select id="pool-${u.id}">${poolOpts}</select>
-          <label style="font-size:0.85em;color:#666;margin-left:6px">Position :</label>
-          <input type="number" id="order-${u.id}" value="${u.order}" min="0" style="width:50px">
-          <button class="reassign-btn" onclick="reassign('${u.id}')">Appliquer</button>
+          <button class="secondary" style="padding:5px 10px" onclick="reassign('${u.id}')">OK</button>
         </td>
       </tr>
     `;
   }).join("");
 }
 
-// ── Contrôle audio + envoi ─────────────────────────────────────────────────
+function renderGantt(elapsed) {
+  const slot = parseFloat(document.getElementById('slot').value) || 6;
+  const overlap = parseFloat(document.getElementById('overlap').value) || 0;
+  const duration = audioPlayer.duration;
+  if (!duration || !isFinite(duration)) {
+    ganttContainer.innerHTML = '<div class="gantt-empty">Charge un audio pour voir la répartition prévisionnelle.</div>';
+    return;
+  }
+  const cycle = Math.max(1, slot - overlap);
+  const n = Math.max(1, numPools);
+  const colors = ['#ff3b3b', '#3b82f6', '#2e9e5b', '#d99a1a', '#a855f7'];
+
+  const rows = [];
+  for (let team = 0; team < n; team++) {
+    let blocks = '';
+    for (let idx = team; idx * cycle < duration; idx += n) {
+      const start = idx * cycle;
+      const end = Math.min(start + slot, duration);
+      const left = (start / duration) * 100;
+      const width = ((end - start) / duration) * 100;
+      blocks += `<div class="gantt-block" style="left:${left}%; width:${width}%; background:${colors[team % colors.length]}"></div>`;
+    }
+    const nowPct = elapsed ? Math.min(100, (elapsed / duration) * 100) : null;
+    const nowMarker = nowPct !== null ? `<div class="gantt-now" style="left:${nowPct}%"></div>` : '';
+    rows.push(`
+      <div class="gantt-row">
+        <div class="gantt-label">Équipe ${team + 1}</div>
+        <div class="gantt-track">${blocks}${nowMarker}</div>
+      </div>
+    `);
+  }
+
+  const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+  const axis = [0, 0.25, 0.5, 0.75, 1].map(p => `<span>${fmt(duration * p)}</span>`).join('');
+
+  ganttContainer.innerHTML = rows.join('') + `<div class="gantt-axis">${axis}</div>`;
+}
+
+function applyParams() {
+  ws.send(JSON.stringify({
+    type: 'admin_set_params',
+    slot: document.getElementById('slot').value,
+    overlap: document.getElementById('overlap').value,
+    countdown: document.getElementById('countdown').value,
+  }));
+  addLog("> admin_set_params appliqué");
+  renderGantt();
+}
+
 function send(type) {
   const payload = {
     type,
     slot: document.getElementById('slot').value,
     overlap: document.getElementById('overlap').value,
-    pools: document.getElementById('pools').value,
     countdown: document.getElementById('countdown').value,
   };
+  if (type === 'admin_start' && audioPlayer.duration && isFinite(audioPlayer.duration)) {
+    payload.audio_duration = audioPlayer.duration;
+  }
   ws.send(JSON.stringify(payload));
   addLog(`> ${type}`);
 
   if (type === 'admin_start') {
-    const countdown = parseInt(document.getElementById('countdown').value) || 0;
+    // Le démarrage réel de l'audio est piloté par syncAudioToSession(), déclenché
+    // par l'état serveur (sync_update) — fiable même en cas de latence réseau.
     audioPlayer.currentTime = 0;
-    if (countdown > 0) {
-      audioStatus.textContent = `⏳ Audio démarre dans ${countdown}s...`;
-      audioStatus.style.color = "#b87000";
-      setTimeout(() => {
-        audioPlayer.play()
-          .then(() => { audioStatus.textContent = "🔊 Audio en cours"; audioStatus.style.color = "#2c7a2c"; })
-          .catch(() => { audioStatus.textContent = "⚠️ Cliquez Play sur le player"; audioStatus.style.color = "#d63f00"; addLog("⚠️ Autoplay bloqué — cliquez Play manuellement."); });
-      }, countdown * 1000);
-    } else {
-      audioPlayer.play()
-        .then(() => { audioStatus.textContent = "🔊 Audio en cours"; audioStatus.style.color = "#2c7a2c"; })
-        .catch(() => { audioStatus.textContent = "⚠️ Cliquez Play sur le player"; audioStatus.style.color = "#d63f00"; addLog("⚠️ Autoplay bloqué — cliquez Play manuellement."); });
-    }
+    audioStatus.textContent = "⏳ Démarrage..."; audioStatus.style.color = "#d99a1a";
   }
 
-  if (type === 'admin_pause') {
-    if (audioPlayer.paused) {
-      audioPlayer.play();
-      audioStatus.textContent = "🔊 Audio en cours";
-      audioStatus.style.color = "#2c7a2c";
-    } else {
-      audioPlayer.pause();
-      audioStatus.textContent = "⏸ Audio en pause";
-      audioStatus.style.color = "#b87000";
-    }
-  }
+  // admin_pause : l'audio se synchronise automatiquement via syncAudioToSession()
+  // dès que le serveur confirme le nouvel état (session_paused / sync_update).
 
   if (type === 'admin_stop') {
     audioPlayer.pause();
     audioPlayer.currentTime = 0;
-    audioStatus.textContent = "⏹ Audio arrêté";
-    audioStatus.style.color = "#888";
+    audioStatus.textContent = "⏹ Audio arrêté"; audioStatus.style.color = "#6b7280";
   }
 }
 
 function reassign(uid) {
   const pool = parseInt(document.getElementById(`pool-${uid}`).value);
-  const order = parseInt(document.getElementById(`order-${uid}`).value);
-  ws.send(JSON.stringify({ type: "admin_assign", user_id: uid, pool_id: pool, order: order }));
-  addLog(`> admin_assign ${uid} → pool ${pool} ordre ${order}`);
+  ws.send(JSON.stringify({ type: "admin_assign", user_id: uid, pool_id: pool, order: 0 }));
+  addLog(`> admin_assign ${uid} → équipe ${pool}`);
 }
 
 function addLog(msg) {

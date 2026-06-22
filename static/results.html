@@ -4,25 +4,28 @@
     <meta charset="UTF-8">
     <title>STC - Résultats expérimentaux</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 1000px; margin: 40px auto; padding: 0 20px; color: #333; background: #f5f5f5; }
-        h1 { color: #1F4E79; border-bottom: 3px solid #2E75B6; padding-bottom: 10px; }
-        h2 { color: #2E75B6; margin-top: 40px; }
-        .card { background: white; border-radius: 8px; padding: 20px; margin: 16px 0; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+        * { box-sizing: border-box; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; max-width: 1000px; margin: 40px auto; padding: 0 24px;
+               color: #e6e6e6; background: #0b0e13; }
+        h1 { color: #e6e6e6; border-bottom: 3px solid #ff3b3b; padding-bottom: 10px; letter-spacing: 0.5px; }
+        h2 { color: #aab2c0; margin-top: 40px; font-size: 1.1rem; letter-spacing: 0.5px; }
+        .card { background: #14181f; border: 1px solid #2a3140; border-radius: 8px; padding: 20px; margin: 16px 0;
+                box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
         table { width: 100%; border-collapse: collapse; }
-        th { background: #2E75B6; color: white; padding: 10px 12px; text-align: left; }
-        td { padding: 9px 12px; border-bottom: 1px solid #ddd; }
-        tr:nth-child(even) { background: #EBF3FB; }
-        tr.best { background: #D5F5E3 !important; font-weight: bold; }
-        .best-badge { background: #27AE60; color: white; padding: 2px 8px; border-radius: 10px; font-size: 12px; margin-left: 8px; }
-        .bar-wrap { background: #eee; border-radius: 4px; height: 20px; width: 100%; }
+        th { background: #1f2530; color: #ff8a8a; padding: 10px 12px; text-align: left; font-size: 0.85rem; letter-spacing: 0.5px; }
+        td { padding: 9px 12px; border-bottom: 1px solid #232a36; }
+        tr:nth-child(even) { background: #181d26; }
+        tr.best { background: #173326 !important; font-weight: bold; }
+        .best-badge { background: #ff3b3b; color: white; padding: 2px 8px; border-radius: 10px; font-size: 12px; margin-left: 8px; }
+        .bar-wrap { background: #1f2530; border-radius: 4px; height: 20px; width: 100%; }
         .bar { height: 20px; border-radius: 4px; color: white; font-size: 12px; font-weight: bold; display: flex; align-items: center; padding-left: 8px; }
-        .bar-green { background: #27AE60; }
-        .bar-red { background: #E74C3C; }
-        .justif { background: #EBF3FB; border-left: 4px solid #2E75B6; padding: 16px 20px; border-radius: 0 8px 8px 0; margin-top: 20px; }
-        .texte { font-style: italic; color: #555; background: #f9f9f9; padding: 8px; border-radius: 4px; margin-top: 6px; font-size: 14px; }
-        #loading { text-align: center; padding: 60px; color: #888; font-size: 18px; }
+        .bar-green { background: #2e9e5b; }
+        .bar-red { background: #ff3b3b; }
+        .justif { background: #181d26; border-left: 4px solid #ff3b3b; padding: 16px 20px; border-radius: 0 8px 8px 0; margin-top: 20px; }
+        .texte { font-style: italic; color: #aab2c0; background: #1f2530; padding: 8px; border-radius: 4px; margin-top: 6px; font-size: 14px; }
+        #loading { text-align: center; padding: 60px; color: #6b7280; font-size: 18px; }
         .nav { margin-bottom: 20px; }
-        .nav a { color: #2E75B6; text-decoration: none; margin-right: 20px; }
+        .nav a { color: #ff8a8a; text-decoration: none; margin-right: 20px; font-size: 0.9rem; }
         .nav a:hover { text-decoration: underline; }
     </style>
 </head>

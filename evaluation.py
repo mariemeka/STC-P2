@@ -22,11 +22,12 @@ TEXTE_REFERENCE = (
 VITESSE_PAROLE = 2.5  # mots/seconde
 
 CONFIGURATIONS = [
-    {"slot": 20, "overlap": 3,  "nb": 2},
-    {"slot": 20, "overlap": 5,  "nb": 2},
-    {"slot": 20, "overlap": 5,  "nb": 4},
-    {"slot": 15, "overlap": 3,  "nb": 2},
-    {"slot": 15, "overlap": 5,  "nb": 4},
+    {"slot": 5,  "overlap": 1, "nb": 2},
+    {"slot": 5,  "overlap": 2, "nb": 2},
+    {"slot": 6,  "overlap": 2, "nb": 2},
+    {"slot": 6,  "overlap": 2, "nb": 4},
+    {"slot": 10, "overlap": 2, "nb": 2},
+    {"slot": 10, "overlap": 4, "nb": 4},
 ]
 
 

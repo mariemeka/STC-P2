@@ -4,65 +4,79 @@
 <meta charset="UTF-8">
 <title>STC - Viewer</title>
 <style>
-  body { font-family: monospace; margin: 20px; max-width: 1000px; background: #fafafa; }
-  .pool { border: 1px solid #ccc; margin-bottom: 16px; padding: 12px; background: white; }
-  .pool h3 { margin: 0 0 8px 0; color: #555; border-bottom: 1px solid #eee; padding-bottom: 4px; }
-  .history {
-    max-height: 280px; overflow-y: auto;
-    background: #fcfcfc; border: 1px solid #eee; padding: 8px;
-    font-size: 1.1rem; line-height: 1.5;
-  }
-  .history-entry { padding: 4px 0; border-bottom: 1px dotted #ddd; }
-  .history-entry:last-child { border-bottom: none; }
-  .history-entry .ts { color: #999; font-size: 0.8rem; margin-right: 8px; }
-  .history-entry .usr { color: #1a73e8; font-weight: bold; margin-right: 6px; }
-  .history-empty { color: #999; font-style: italic; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0 auto; padding: 20px; max-width: 1100px;
+         background: #0b0e13; color: #e6e6e6; }
+  h2 { margin: 0 0 16px; font-size: 1.1rem; letter-spacing: 1px; color: #aab2c0; }
 
+  .pool { background: #1a1a1a; border-radius: 8px; margin-bottom: 20px; overflow: hidden;
+          box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+
+  /* ── Bandeau "lower-third" live ───────────────────────────────────── */
   .live-zone {
-    margin-top: 8px; padding: 8px; min-height: 2rem;
-    background: #eef4fc; border-radius: 4px;
+    background: rgba(0,0,0,0.9); border-top: 3px solid #ff3b3b;
+    padding: 18px 24px; min-height: 1.6rem;
   }
-  .live-zone-empty { color: #999; font-style: italic; font-size: 0.9rem; }
-  .live-entry { font-size: 1.3rem; color: #1a73e8; line-height: 1.4; }
-  .live-entry .usr { color: #999; font-size: 0.85rem; margin-right: 6px; font-weight: bold; }
+  .pool-tag { color: #ff3b3b; font-size: 0.75rem; font-weight: bold; letter-spacing: 1.5px; margin-bottom: 8px; }
+  .live-zone-empty { color: #555; font-style: italic; font-size: 0.9rem; }
+  .live-entry { font-size: 1.5rem; color: white; line-height: 1.4; font-weight: 500; }
+  .live-entry .usr { color: #ff8a8a; font-size: 0.85rem; margin-right: 8px; font-weight: bold; vertical-align: middle; }
   .live-entry .text::after {
-    content: '▌'; animation: blink 1s steps(1) infinite; color: #888; margin-left: 2px;
+    content: '▌'; animation: blink 1s steps(1) infinite; color: #ff3b3b; margin-left: 4px;
   }
   @keyframes blink { 50% { opacity: 0; } }
 
-  #status { margin-bottom: 10px; padding: 8px; background: white; border: 1px solid #ccc; }
+  /* ── Historique (sous le bandeau live) ───────────────────────────── */
+  .history {
+    max-height: 220px; overflow-y: auto;
+    background: #14181f; padding: 10px 24px;
+    font-size: 0.95rem; line-height: 1.6;
+  }
+  .history-entry { padding: 6px 0; border-bottom: 1px solid #232a36; color: #c4cad6; }
+  .history-entry:last-child { border-bottom: none; }
+  .history-entry .ts { color: #5a6275; font-size: 0.78rem; margin-right: 8px; }
+  .history-entry .usr { color: #6ea8ff; font-weight: bold; margin-right: 6px; }
+  .history-empty { color: #555; font-style: italic; }
+
+  #status { margin-bottom: 14px; padding: 10px 14px; background: #14181f; border: 1px solid #2a3140;
+            border-radius: 6px; color: #aab2c0; font-size: 0.9rem; }
   #countdown-banner {
     display: none;
-    background: #ff6b6b; color: white; padding: 20px;
+    background: #ff3b3b; color: white; padding: 22px;
     font-size: 2rem; font-weight: bold; text-align: center;
-    margin-bottom: 12px;
+    margin-bottom: 14px; border-radius: 6px;
   }
   #countdown-banner.visible { display: block; }
-  button { font: inherit; padding: 4px 10px; }
 </style>
 </head>
 <body>
 
-<h2>STC - Viewer</h2>
+<h2>● STC — DIRECT</h2>
 <div id="countdown-banner">La session démarre dans <span id="cd-num">3</span>...</div>
 <div id="status">Connexion...</div>
-<div style="margin-bottom:10px">
-  <button onclick="clearHistory()">Effacer l'historique affiché</button>
-  <label style="margin-left:12px"><input type="checkbox" id="autoscroll" checked> Auto-scroll</label>
+
+<div class="pool">
+  <div class="live-zone">
+    <div class="pool-tag">EN DIRECT</div>
+    <div class="live-content" id="live-content"><span class="live-zone-empty">Aucune frappe en cours.</span></div>
+  </div>
+  <div class="history" id="history"><div class="history-empty">Aucun sous-titre validé pour l'instant.</div></div>
 </div>
-<div id="pools"></div>
 
 <script>
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
 const ws = new WebSocket(`${proto}://${location.host}/ws`);
 const statusDiv = document.getElementById('status');
-const poolsDiv = document.getElementById('pools');
 const cdBanner = document.getElementById('countdown-banner');
 const cdNum = document.getElementById('cd-num');
-const poolEls = {};
-// liveTypers[poolId] = { user: text } : permet d'afficher plusieurs typers
-// simultanés (cas overlap)
+const liveContent = document.getElementById('live-content');
+const historyDiv = document.getElementById('history');
+// liveTypers[(pool,user)] = text : permet de fusionner les frappes simultanées
+// en un seul résultat affiché, sans exposer qui écrit quoi.
 const liveTypers = {};
+// Dernière ligne affichée — reste visible jusqu'à la suivante (comme un sous-titre vidéo),
+// on ne revient jamais à "vide" entre deux phrases.
+let lastDisplayedText = '';
 
 ws.onopen = () => {
   statusDiv.innerText = "Connecté. En attente de sous-titres...";
@@ -88,47 +102,38 @@ ws.onmessage = (event) => {
     }
   }
 
-  // Frappe en cours (avant Entrée) — diffusion live
+  // Frappe en cours (avant Entrée) — diffusion live, fusionnée, sans attribution
   if (msg.type === "live_typing") {
-    ensurePool(msg.pool);
-    if (!liveTypers[msg.pool]) liveTypers[msg.pool] = {};
+    const key = `${msg.pool}:${msg.user}`;
     const text = (msg.text || "").trim();
     if (text) {
-      liveTypers[msg.pool][msg.user] = text;
+      liveTypers[key] = text;
     } else {
-      delete liveTypers[msg.pool][msg.user];
+      delete liveTypers[key];
     }
-    renderLive(msg.pool);
+    renderLive();
   }
 
-  // Phrase validée (Entrée ou auto-envoi en fin de slot)
+  // Phrase validée (Entrée ou auto-envoi en fin de slot) — flux unique, chronologique
   if (msg.type === "new_text") {
-    const pool = ensurePool(msg.pool);
     const entry = document.createElement('div');
     entry.className = 'history-entry';
     const ts = new Date().toLocaleTimeString();
-    entry.innerHTML = `<span class="ts">[${ts} · slot ${msg.slot_index}]</span>` +
-                      `<span class="usr">${escapeHtml(msg.user)}</span>` +
-                      escapeHtml(msg.text);
-    // Supprime le placeholder "Aucun sous-titre"
-    const empty = pool.history.querySelector('.history-empty');
+    entry.innerHTML = `<span class="ts">[${ts}]</span>${escapeHtml(msg.text)}`;
+    const empty = historyDiv.querySelector('.history-empty');
     if (empty) empty.remove();
-    pool.history.appendChild(entry);
-    if (document.getElementById('autoscroll').checked) {
-      pool.history.scrollTop = pool.history.scrollHeight;
-    }
-    // L'utilisateur a validé : on retire son entrée live
-    if (liveTypers[msg.pool]) {
-      delete liveTypers[msg.pool][msg.user];
-      renderLive(msg.pool);
-    }
+    historyDiv.appendChild(entry);
+    historyDiv.scrollTop = historyDiv.scrollHeight;
+    delete liveTypers[`${msg.pool}:${msg.user}`];
+    lastDisplayedText = msg.text;
+    renderLive();
   }
 
   if (msg.type === "session_ended") {
     statusDiv.innerText = "Session terminée. L'historique reste affiché.";
     cdBanner.classList.remove('visible');
-    // On vide UNIQUEMENT la zone live, on garde l'historique
-    Object.keys(liveTypers).forEach(p => { liveTypers[p] = {}; renderLive(p); });
+    Object.keys(liveTypers).forEach(k => delete liveTypers[k]);
+    renderLive();
   }
 };
 
@@ -136,42 +141,21 @@ ws.onclose = () => {
   statusDiv.innerText = "Déconnecté du serveur.";
 };
 
-function ensurePool(poolId) {
-  if (poolEls[poolId]) return poolEls[poolId];
-  const div = document.createElement('div');
-  div.className = 'pool';
-  div.innerHTML = `
-    <h3>Pool ${poolId}</h3>
-    <div class="history"><div class="history-empty">Aucun sous-titre validé pour l'instant.</div></div>
-    <div class="live-zone"><span class="live-zone-empty">Aucune frappe en cours.</span></div>
-  `;
-  poolsDiv.appendChild(div);
-  poolEls[poolId] = {
-    container: div,
-    history: div.querySelector('.history'),
-    live: div.querySelector('.live-zone'),
-  };
-  return poolEls[poolId];
-}
-
-function renderLive(poolId) {
-  const pool = poolEls[poolId];
-  if (!pool) return;
-  const typers = liveTypers[poolId] || {};
-  const users = Object.keys(typers);
-  if (!users.length) {
-    pool.live.innerHTML = '<span class="live-zone-empty">Aucune frappe en cours.</span>';
+function renderLive() {
+  const texts = Object.values(liveTypers);
+  if (!texts.length) {
+    // Personne ne tape : on garde la dernière phrase affichée, sans curseur clignotant.
+    if (lastDisplayedText) {
+      liveContent.innerHTML = `<div class="live-entry"><span class="text-static">${escapeHtml(lastDisplayedText)}</span></div>`;
+    } else {
+      liveContent.innerHTML = '<span class="live-zone-empty">Aucune frappe en cours.</span>';
+    }
     return;
   }
-  pool.live.innerHTML = users.map(u =>
-    `<div class="live-entry"><span class="usr">${escapeHtml(u)}</span><span class="text">${escapeHtml(typers[u])}</span></div>`
-  ).join("");
-}
-
-function clearHistory() {
-  Object.values(poolEls).forEach(p => {
-    p.history.innerHTML = '<div class="history-empty">Aucun sous-titre validé pour l\'instant.</div>';
-  });
+  // Plusieurs contributions simultanées (overlap) : on affiche le résultat
+  // le plus complet, sans révéler qui tape quoi.
+  const best = texts.reduce((a, b) => b.length > a.length ? b : a);
+  liveContent.innerHTML = `<div class="live-entry"><span class="text">${escapeHtml(best)}</span></div>`;
 }
 
 function escapeHtml(s) {
