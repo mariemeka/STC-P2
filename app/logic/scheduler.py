@@ -1,4 +1,3 @@
-import math
 import time
 from typing import Dict, Optional
 from pydantic import BaseModel, computed_field
@@ -30,6 +29,11 @@ class User(BaseModel):
     order_in_pool: int
     typing_speed: float = 0.0           # mots/seconde mesuré en temps réel
     writing_time_personal: int = 0      # 0 = utiliser la valeur globale (writing_time)
+    # Temps d'écriture figé pour le tour EN COURS : l'adaptation dynamique ne
+    # s'applique qu'au tour suivant, jamais au tour déjà commencé (sinon on
+    # risque de couper un sous-titreur en pleine frappe).
+    frozen_slot: int = -1
+    frozen_writing_time: int = 0
 
 
 ADMIN_ID = "admin_master"
@@ -138,6 +142,15 @@ class Scheduler:
         user.writing_time_personal = new_val
         return changed
 
+    def reset_adaptation(self):
+        """Remet à zéro l'adaptation/figeage de tous les sous-titreurs.
+        À appeler au démarrage d'une nouvelle session."""
+        for user in self.users.values():
+            user.typing_speed = 0.0
+            user.writing_time_personal = 0
+            user.frozen_slot = -1
+            user.frozen_writing_time = 0
+
     # ── Pause ─────────────────────────────────────────────────────────────
     def toggle_pause(self):
         if not self.config.is_active:
@@ -206,32 +219,36 @@ class Scheduler:
             pool_users = [u for u in self._subtitlers() if u.pool_id == user.pool_id]
             n = len(pool_users)
             if n > 0:
-                # Le temps d'écriture peut s'étaler sur plusieurs segments d'écoute :
-                # on regarde en arrière sur autant de segments que nécessaire pour
-                # retrouver le segment dont ce sous-titreur est responsable et dont
-                # la fenêtre d'écriture couvre l'instant présent.
-                max_back = int(math.ceil(personal_writing_time / slot_dur)) + 1
-                for k in range(global_slot_index, max(-1, global_slot_index - max_back), -1):
-                    if k < 0 or (k % n) != user.order_in_pool:
-                        continue
-                    seg_start = k * slot_dur
-                    seg_end = seg_start + personal_writing_time
-                    if seg_start <= elapsed < seg_end:
-                        is_my_turn = True
-                        my_slot_index = k
-                        my_time_left = round(max(0.0, seg_end - elapsed), 1)
-                        time_in_turn = round(elapsed - seg_start, 1)
-                        break
+                order = user.order_in_pool
+                # Segment d'écoute le plus récent appartenant à ce sous-titreur
+                # (le plus grand k <= global_slot_index avec k % n == order).
+                k_active = global_slot_index - ((global_slot_index - order) % n)
+                if k_active >= 0:
+                    seg_start = k_active * slot_dur
+                    if seg_start <= elapsed:
+                        # Fige le temps d'écriture au DÉBUT du tour : l'adaptation
+                        # dynamique ne s'applique qu'au tour suivant, jamais au
+                        # tour en cours (sinon on coupe le sous-titreur).
+                        if user.frozen_slot != k_active:
+                            user.frozen_slot = k_active
+                            user.frozen_writing_time = personal_writing_time
+                        wt = user.frozen_writing_time or personal_writing_time
+                        seg_end = seg_start + wt
+                        if elapsed < seg_end:
+                            is_my_turn = True
+                            my_slot_index = k_active
+                            my_time_left = round(max(0.0, seg_end - elapsed), 1)
+                            time_in_turn = round(elapsed - seg_start, 1)
+                            personal_writing_time = wt  # refléter le temps figé
 
                 if not is_my_turn:
                     # Préavis : dans combien de temps son prochain segment commence-t-il ?
-                    for k in range(global_slot_index, global_slot_index + 2 * n + 1):
-                        if k < 0 or (k % n) != user.order_in_pool:
-                            continue
-                        seg_start = k * slot_dur
-                        if seg_start > elapsed:
-                            next_turn_in = round(seg_start - elapsed, 1)
-                            break
+                    for k in range(global_slot_index + 1, global_slot_index + 2 * n + 1):
+                        if (k % n) == order:
+                            seg_start = k * slot_dur
+                            if seg_start > elapsed:
+                                next_turn_in = round(seg_start - elapsed, 1)
+                                break
 
         return {
             "active": self.config.is_active,

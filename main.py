@@ -237,6 +237,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 global session_id
                 session_id = f"sess_{int(time.time())}"
                 last_live_save.clear()
+                scheduler.reset_adaptation()
                 scheduler.set_config(
                     slot_dur=int(msg.get("slot", 8)),
                     writing_time=int(msg.get("writing_time", 24)),
