@@ -30,6 +30,8 @@
 
 <h2>STC - Console Admin</h2>
 
+<div id="correction-status" style="margin-bottom:12px; padding:6px 10px; border-radius:4px; font-size:0.9em; display:inline-block; background:#eee; color:#555;">Moteur de correction : vérification…</div>
+
 <!-- ── RACCOURCIS ───────────────────────────────────────────────────────── -->
 <fieldset>
   <legend>Raccourcis</legend>
@@ -43,7 +45,7 @@
 <fieldset>
   <legend>Source audio</legend>
   <audio id="audio-player" controls style="width:100%;">
-      <source src="/static/media/video.mp4" type="video/mp4">
+      <source src="/static/media/le-vrai-heritier.mp3" type="audio/mpeg">
       Votre navigateur ne supporte pas l'audio.
   </audio>
   <div style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -213,10 +215,21 @@ ws.onmessage = (event) => {
     stateDisplay.className = "state-stopped";
     liveTypers = {};
     renderLiveTyping();
-    if (data.files && data.files.length) {
-      filesDiv.innerHTML = data.files.map(f =>
-        `<a href="/download/${encodeURIComponent(f)}" target="_blank">${f}</a>`
+    const files = data.files || [];
+    if (files.length) {
+      filesDiv.innerHTML = files.map(f =>
+        `<a href="/download/${encodeURIComponent(f)}" target="_blank"
+            style="display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;background:#1a73e8;color:#fff;border-radius:4px;text-decoration:none;font-weight:bold;">Télécharger ${f}</a>`
       ).join("");
+      addLog("Fichiers prêts : " + files.join(", "));
+      // Rendre la zone bien visible
+      const box = filesDiv.parentElement;
+      box.scrollIntoView({ behavior: "smooth", block: "center" });
+      box.style.transition = "background 0.4s";
+      box.style.background = "#fff7d6";
+      setTimeout(() => { box.style.background = ""; }, 3000);
+    } else {
+      filesDiv.innerHTML = '<em>Session terminée — aucun sous-titre n\'a été enregistré (personne n\'a tapé ?).</em>';
     }
   }
 };
@@ -379,6 +392,29 @@ function addLog(msg) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+
+// ── Statut de la correction (orthographe + grammaire) ──────────────────────
+function pollCorrection() {
+  const el = document.getElementById('correction-status');
+  fetch('/health').then(r => r.json()).then(h => {
+    if (!h.spell) {
+      el.textContent = 'Moteur de correction : indisponible';
+      el.style.background = '#fde0dc'; el.style.color = '#b3261e';
+    } else if (!h.grammar) {
+      el.textContent = 'Moteur de correction : orthographe active, grammaire en cours de chargement…';
+      el.style.background = '#fff3cd'; el.style.color = '#7a5b00';
+      setTimeout(pollCorrection, 3000);
+    } else {
+      el.textContent = 'Moteur de correction actif (orthographe + grammaire) — corrige automatiquement chaque sous-titre';
+      el.style.background = '#e6f4ea'; el.style.color = '#1e7e34';
+    }
+  }).catch(() => {
+    el.textContent = 'Correction : serveur injoignable…';
+    el.style.background = '#fde0dc'; el.style.color = '#b3261e';
+    setTimeout(pollCorrection, 3000);
+  });
+}
+pollCorrection();
 </script>
 </body>
 </html>
