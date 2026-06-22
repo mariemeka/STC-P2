@@ -5,10 +5,11 @@ import os
 import asyncio
 from typing import Dict
 from symspellpy import SymSpell, Verbosity
+from pygrammalecte import grammalecte_text, GrammalecteGrammarMessage
 import unicodedata
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 
 from app.logic.scheduler import Scheduler
 from app.logic.fusion import fuse_session
@@ -38,6 +39,54 @@ if _dict_loaded:
         stripped = _strip_accents(entry)
         if stripped != entry and stripped not in _accent_map:
             _accent_map[stripped] = entry
+
+# Types de règles grammalecte qu'on garde (accords, participes passés...)
+_GRAM_SAFE_TYPES = {"conj", "gn", "ppas"}
+_GRAM_SAFE_CONF_RULES = {"g2__conf_ce_ceux_se__b2_a1_1"}
+# Règle "ma/ta/sa" -> "mon/ton/son" confond souvent "ma" avec "m'a", on l'exclut
+_GRAM_UNSAFE_RULE_PREFIXES = ("g3__gn_ma_ta_sa_1m",)
+
+# Premier appel = chargement des règles (~10s)
+try:
+    list(grammalecte_text("test"))
+except Exception:
+    pass
+
+def _grammar_correct(text: str) -> str:
+    try:
+        results = list(grammalecte_text(text))
+    except Exception:
+        return text
+    edits = []
+    for r in results:
+        if not isinstance(r, GrammalecteGrammarMessage):
+            continue
+        if len(r.suggestions) != 1:
+            continue
+        if r.rule.startswith(_GRAM_UNSAFE_RULE_PREFIXES):
+            continue
+        if r.type in _GRAM_SAFE_TYPES or (r.type == "conf" and r.rule in _GRAM_SAFE_CONF_RULES):
+            edits.append((r.start, r.end, r.suggestions[0]))
+    edits.sort(reverse=True)
+    for start, end, repl in edits:
+        text = text[:start] + repl + text[end:]
+    return text
+
+# Élisions tapées sans apostrophe (jai -> j'ai, cest -> c'est, quon -> qu'on...)
+_ELISION_PREFIXES = ["qu", "j", "m", "t", "s", "l", "c", "d", "n"]
+_ELISION_VOWELS = set("aeiouyàâäéèêëïîôöùûü") | {"h"}
+
+def _try_elision(w_lower: str):
+    for p in _ELISION_PREFIXES:
+        if w_lower.startswith(p) and len(w_lower) > len(p) + 1:
+            rest = w_lower[len(p):]
+            if rest[0] not in _ELISION_VOWELS:
+                continue
+            if _sym.lookup(rest, Verbosity.TOP, max_edit_distance=0):
+                return f"{p}'{rest}"
+            if rest in _accent_map:
+                return f"{p}'{_accent_map[rest]}"
+    return None
 
 def correct_text(text: str, final: bool = False) -> str:
     if not _dict_loaded:
@@ -79,13 +128,20 @@ def correct_text(text: str, final: bool = False) -> str:
             fix = _accent_map[w_lower]
             corrected.append(fix.capitalize() if word[0].isupper() else fix)
             continue
+        elision = _try_elision(w_lower)
+        if elision:
+            corrected.append(elision.capitalize() if word[0].isupper() else elision)
+            continue
         suggestions = _sym.lookup(w_lower, Verbosity.CLOSEST, max_edit_distance=2)
         if suggestions:
             fix = suggestions[0].term
             corrected.append(fix.capitalize() if word[0].isupper() else fix)
         else:
             corrected.append(word)
-    return " ".join(corrected + last) + (" " if trailing_space else "")
+    result = " ".join(corrected + last) + (" " if trailing_space else "")
+    if final:
+        result = _grammar_correct(result)
+    return result
 
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -99,6 +155,18 @@ last_live_save: Dict[tuple, float] = {}
 LIVE_SAVE_THROTTLE = 1.0
 
 # ─── ROUTES HTTP ──────────────────────────────────────────────────────────
+
+@app.post("/upload-audio")
+async def upload_audio(file: UploadFile = File(...)):
+    allowed = {".mp4", ".mp3", ".wav", ".ogg", ".webm"}
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in allowed:
+        return JSONResponse({"error": "Format non supporté"}, status_code=400)
+    os.makedirs("static/media", exist_ok=True)
+    dest = f"static/media/audio{ext}"
+    with open(dest, "wb") as f:
+        f.write(await file.read())
+    return JSONResponse({"url": f"/static/media/audio{ext}"})
 
 @app.get("/")
 async def get_index():
@@ -170,10 +238,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 session_id = f"sess_{int(time.time())}"
                 last_live_save.clear()
                 scheduler.set_config(
-                    slot_dur=int(msg.get("slot", 20)),
-                    overlap=int(msg.get("overlap", 5)),
+                    slot_dur=int(msg.get("slot", 8)),
+                    writing_time=int(msg.get("writing_time", 24)),
                     pools=int(msg.get("pools", 1)),
                     countdown=int(msg.get("countdown", 3)),
+                    pre_alert=int(msg.get("pre_alert", 5)),
                 )
                 scheduler.config.start_time = time.time() + scheduler.config.countdown
                 scheduler.config.is_active = True
@@ -236,9 +305,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                         # ── Mesure vitesse de frappe + adaptation ─────────
                         nb_mots = len(text.split()) if text.strip() else 0
-                        elapsed = state.get("elapsed", 1)
-                        cycle_time = max(1, scheduler.config.slot_duration - scheduler.config.overlap_duration)
-                        temps_dans_slot = elapsed % cycle_time
+                        temps_dans_slot = state.get("time_in_turn", 0) or 1
                         if temps_dans_slot > 0 and nb_mots > 0:
                             vitesse = round(nb_mots / temps_dans_slot, 2)
                             scheduler.update_typing_speed(user_id, vitesse)
@@ -354,7 +421,7 @@ async def broadcast_user_list():
             "pool": u.pool_id,
             "order": u.order_in_pool,
             "speed": u.typing_speed,
-            "personal_slot": u.slot_duration_personal or 0,
+            "personal_writing_time": u.writing_time_personal or 0,
         }
         for u in scheduler.users.values()
     ]

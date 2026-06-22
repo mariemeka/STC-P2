@@ -6,6 +6,12 @@ Teste directement l'algorithme de fusion sans passer par le serveur.
 import random
 import json
 import os
+import sys
+
+# Console Windows (cp1252) : forcer UTF-8 pour ne pas planter sur les emojis/accents
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from app.logic.fusion import fuse_session
 from app.core.models import Caption
 from app.core.database import save_caption_to_csv
