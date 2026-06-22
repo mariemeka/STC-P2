@@ -1,0 +1,29 @@
+# Ne pas embarquer dans l'image du conteneur
+venv/
+env/
+.venv/
+__pycache__/
+*.pyc
+data/
+tests/
+demo_scenario.py
+demo_realiste.py
+evaluation.py
+.git/
+.gitignore
+node_modules/
+*.pptx
+*.pdf
+*.wav
+STC-presentation.pptx
+STC-recap.pdf
+demo-audio.wav
+static/audio/
+# fichiers Cloudflare eux-mêmes
+Dockerfile
+.dockerignore
+wrangler.jsonc
+package.json
+package-lock.json
+src/
+tsconfig.json
