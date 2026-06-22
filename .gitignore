@@ -21,3 +21,12 @@ Thumbs.db
 # Logs / temporaires
 *.log
 *.tmp
+
+# Node (outils Cloudflare, non utilisés - hébergement sur Hugging Face)
+node_modules/
+
+# Fichiers perso / volumineux (non versionnés)
+*.pptx
+*.pdf
+*.wav
+static/audio/
