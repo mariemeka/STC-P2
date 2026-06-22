@@ -1,8 +1,10 @@
 import json
+import re
 import time
 import uuid
 import os
 import asyncio
+import threading
 from typing import Dict
 from symspellpy import SymSpell, Verbosity
 from pygrammalecte import grammalecte_text, GrammalecteGrammarMessage
@@ -12,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 
 from app.logic.scheduler import Scheduler
-from app.logic.fusion import fuse_session
+from app.logic.fusion import fuse_session, collapse_repeats
 from app.engine.formatter import to_srt, to_txt, redistribute_words
 from app.core.database import save_caption_to_csv
 from app.core.models import Caption
@@ -46,13 +48,23 @@ _GRAM_SAFE_CONF_RULES = {"g2__conf_ce_ceux_se__b2_a1_1"}
 # Règle "ma/ta/sa" -> "mon/ton/son" confond souvent "ma" avec "m'a", on l'exclut
 _GRAM_UNSAFE_RULE_PREFIXES = ("g3__gn_ma_ta_sa_1m",)
 
-# Premier appel = chargement des règles (~10s)
-try:
-    list(grammalecte_text("test"))
-except Exception:
-    pass
+# Chargement des règles de grammaire (~10s) EN ARRIÈRE-PLAN pour que le serveur
+# démarre tout de suite. _grammar_ready passe à True quand c'est chargé.
+_grammar_ready = False
+
+def _warmup_grammar():
+    global _grammar_ready
+    try:
+        list(grammalecte_text("test"))
+        _grammar_ready = True
+    except Exception:
+        _grammar_ready = False
+
+threading.Thread(target=_warmup_grammar, daemon=True).start()
 
 def _grammar_correct(text: str) -> str:
+    if not _grammar_ready:
+        return text   # grammaire pas encore chargée -> on ne bloque pas
     try:
         results = list(grammalecte_text(text))
     except Exception:
@@ -76,6 +88,17 @@ def _grammar_correct(text: str) -> str:
 _ELISION_PREFIXES = ["qu", "j", "m", "t", "s", "l", "c", "d", "n"]
 _ELISION_VOWELS = set("aeiouyàâäéèêëïîôöùûü") | {"h"}
 
+# Élisions tapées avec un ESPACE au lieu de l'apostrophe (l homme -> l'homme,
+# j ai -> j'ai, c est -> c'est, qu il -> qu'il...). On ne fusionne que si le
+# préfixe est un token isolé suivi d'un mot commençant par une voyelle/h.
+_ELISION_SPACE_RE = re.compile(
+    r"(?<![A-Za-zÀ-ÿ'])(qu|[ldjcmnst])\s+(?=[aeiouyàâäéèêëïîôöùûüh])",
+    re.IGNORECASE,
+)
+
+def _merge_space_elisions(text: str) -> str:
+    return _ELISION_SPACE_RE.sub(lambda m: m.group(1) + "'", text)
+
 def _try_elision(w_lower: str):
     for p in _ELISION_PREFIXES:
         if w_lower.startswith(p) and len(w_lower) > len(p) + 1:
@@ -92,6 +115,7 @@ def correct_text(text: str, final: bool = False) -> str:
     if not _dict_loaded:
         return text
     text = text.replace("\u2019", "'").replace("\u02bc", "'")
+    text = _merge_space_elisions(text)
     words = text.split(" ")
     trailing_space = text.endswith(" ")
     complete = words if (trailing_space or final) else words[:-1]
@@ -167,6 +191,11 @@ async def upload_audio(file: UploadFile = File(...)):
     with open(dest, "wb") as f:
         f.write(await file.read())
     return JSONResponse({"url": f"/static/media/audio{ext}"})
+
+@app.get("/health")
+async def health():
+    # Indique si la correction est prête (orthographe = dico, grammaire = grammalecte)
+    return JSONResponse({"spell": _dict_loaded, "grammar": _grammar_ready})
 
 @app.get("/")
 async def get_index():
@@ -396,6 +425,8 @@ async def stop_and_export():
         # ── Correction post-fusion sur le texte final complet ─────────
         texte_complet = " ".join(c["text"] for c in captions if c["text"].strip())
         texte_corrige = correct_text(texte_complet, final=True)
+        # Retire les phrases répétées du relais (ex. "il avait beaucoup" x3)
+        texte_corrige = " ".join(collapse_repeats(texte_corrige.split()))
         # Redistribue le texte sur les slots (en gardant leur minutage) et
         # retire les sous-titres vides (cas : moins de mots que de slots).
         captions = redistribute_words(captions, texte_corrige)

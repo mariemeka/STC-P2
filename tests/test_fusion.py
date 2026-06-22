@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.logic.fusion import _dedupe_pair
+from app.logic.fusion import _dedupe_pair, collapse_repeats
 
 
 class TestDedupePair(unittest.TestCase):
@@ -37,6 +37,42 @@ class TestDedupePair(unittest.TestCase):
         # "de" vs "le" ne doit PAS être considéré comme un overlap
         prev, nxt = _dedupe_pair("la fin de", "le début ici")
         self.assertEqual(nxt, "le début ici")
+
+    def test_gros_bloc_avec_mot_coupe(self):
+        """Cas réel relais : prev finit par un mot coupé, next reprend tout le bloc complet."""
+        prev = "le vrai julien etait le fils dun homme tres pa"
+        nxt = "julien etait le fils dun homme tres pauvre son pere"
+        new_prev, new_next = _dedupe_pair(prev, nxt)
+        # le bloc n'apparaît qu'UNE fois après recollage, et "pa" coupé -> "pauvre"
+        self.assertEqual(new_prev + " " + new_next,
+                         "le vrai julien etait le fils dun homme tres pauvre son pere")
+
+    def test_mot_coupe_seul_pas_de_faux_positif(self):
+        """'la' + 'lavande' ne doit PAS fusionner (pas de contexte avant le partiel)."""
+        prev, nxt = _dedupe_pair("je vois la", "lavande pousse")
+        self.assertEqual(prev, "je vois la")
+        self.assertEqual(nxt, "lavande pousse")
+
+
+class TestCollapseRepeats(unittest.TestCase):
+    def test_anchor_repete_garde_les_suites(self):
+        words = "il avait beaucoup traca il avait beaucoup voyage il avait beaucoup trace".split()
+        self.assertEqual(" ".join(collapse_repeats(words)),
+                         "il avait beaucoup traca beaucoup voyage beaucoup trace")
+
+    def test_bloc_double_collapse(self):
+        words = "julien etait le fils dun homme julien etait le fils dun homme tres pauvre".split()
+        self.assertEqual(" ".join(collapse_repeats(words)),
+                         "julien etait le fils dun homme tres pauvre")
+
+    def test_preserve_negation(self):
+        # 'navait' != 'avait' -> on ne doit PAS supprimer la négation
+        words = "il avait de largent il navait pas de i".split()
+        self.assertIn("navait", collapse_repeats(words))
+
+    def test_pas_de_collapse_sans_repetition(self):
+        words = "le chat dort sur le tapis".split()
+        self.assertEqual(collapse_repeats(words), words)
 
 
 if __name__ == "__main__":

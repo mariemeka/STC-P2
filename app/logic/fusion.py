@@ -133,6 +133,37 @@ def _find_word_overlap(prev_words: List[str], next_words: List[str]) -> Tuple[in
     return 0, 0
 
 
+def _best_overlap(prev_words: List[str], next_words: List[str]) -> Tuple[int, int]:
+    """Trouve le plus grand chevauchement entre la FIN de prev et le DÉBUT de next.
+
+    Retourne (drop_prev, drop_next) :
+      - drop_next : nombre de mots dupliqués à retirer du début de next
+      - drop_prev : 1 si le dernier mot de prev est un mot COUPÉ (préfixe du mot
+        complet de next) qu'il faut retirer (on garde la version complète de next), sinon 0
+
+    Comparaison tolérante aux fautes (_word_match) pour rattraper les overlaps
+    mal tapés ("toutes"/"toutse", "prêt"/"pêrt"...).
+    """
+    max_k = min(len(prev_words), len(next_words))
+    for k in range(max_k, 0, -1):
+        partial = False
+        ok = True
+        for i in range(k):
+            p, n = prev_words[-k + i], next_words[i]
+            if _word_match(p, n):
+                continue
+            # Dernier mot de l'overlap : prev peut être un mot COUPÉ (préfixe de n).
+            # Exigé k>=2 (au moins un mot de contexte avant) pour éviter les faux positifs.
+            if i == k - 1 and k >= 2 and len(p) >= 2 and _norm(n).startswith(_norm(p)):
+                partial = True
+                continue
+            ok = False
+            break
+        if ok:
+            return (1, k - 1) if partial else (0, k)
+    return 0, 0
+
+
 def _dedupe_pair(prev_text: str, next_text: str) -> Tuple[str, str]:
     """Retire l'overlap entre prev et next. Retourne (new_prev, new_next)."""
     prev_lines = prev_text.split("\n")
@@ -148,35 +179,54 @@ def _dedupe_pair(prev_text: str, next_text: str) -> Tuple[str, str]:
     prev_words = prev_last.split()
     next_words = next_first.split()
 
-    # Chercher combien de mots du début de next correspondent à la fin de prev.
-    # Comparaison tolérante aux fautes (_word_match) pour rattraper les overlaps
-    # où le mot répété a été mal tapé (ex. "toutes les" repris en "toutse les").
-    max_k = min(len(prev_words), len(next_words))
-    k_next = 0
-
-    for k in range(max_k, 0, -1):
-        if all(_word_match(p, n) for p, n in zip(prev_words[-k:], next_words[:k])):
-            k_next = k
-            break
-
-    # Cas mot partiel : dernier mot de prev est un préfixe d'un mot de next
-    if k_next == 0 and prev_words and next_words:
-        last = prev_words[-1]
-        if len(last) >= 2 and next_words[0].startswith(last) and next_words[0] != last:
-            k_next = 1
-
-    if k_next == 0:
+    drop_prev, drop_next = _best_overlap(prev_words, next_words)
+    if drop_prev == 0 and drop_next == 0:
         return prev_text, next_text
 
-    # On garde prev intact
-    # On supprime uniquement le début de next (les k_next mots dupliqués)
-    new_first = " ".join(next_words[k_next:])
+    if drop_prev:
+        prev_lines[-1] = " ".join(prev_words[:-drop_prev])
+
+    new_first = " ".join(next_words[drop_next:])
     if new_first:
         next_lines[0] = new_first
     else:
         next_lines = next_lines[1:]
 
-    return prev_text, "\n".join(next_lines)
+    return "\n".join(prev_lines), "\n".join(next_lines)
+
+
+def _blocks_match(a: List[str], b: List[str]) -> bool:
+    return len(a) == len(b) and len(a) > 0 and all(_norm(x) == _norm(y) for x, y in zip(a, b))
+
+
+def collapse_repeats(words: List[str], window: int = 10, min_len: int = 2) -> List[str]:
+    """Retire la 2e occurrence d'un groupe de mots déjà vu peu avant (<= window
+    mots), en gardant les suites. Typique du relais où plusieurs sous-titreurs
+    réécrivent le même bout d'audio ("il avait beaucoup X ... il avait beaucoup Y").
+
+    Comparaison EXACTE (accents/casse ignorés, mais pas les fautes) pour ne JAMAIS
+    supprimer un mot réellement différent (ex. la négation "n'avait" vs "avait").
+    """
+    out: List[str] = []
+    for w in words:
+        out.append(w)
+        n = len(out)
+        best_L = 0
+        for L in range(min(window, n // 2), min_len - 1, -1):
+            tail = out[n - L:]
+            for gap in range(0, window + 1):
+                b = n - L - gap
+                a = b - L
+                if a < 0:
+                    break
+                if _blocks_match(out[a:b], tail):
+                    best_L = L
+                    break
+            if best_L:
+                break
+        if best_L:
+            del out[n - best_L:]
+    return out
 
 
 def fuse_session(session_id: str, num_pools: int) -> Dict[int, List[dict]]:
@@ -222,8 +272,8 @@ def fuse_session(session_id: str, num_pools: int) -> Dict[int, List[dict]]:
             if not s["text"].strip():
                 continue
             if cleaned:
-                prev_text = cleaned[-1]["text"]
-                _, new_next_text = _dedupe_pair(prev_text, s["text"])
+                new_prev_text, new_next_text = _dedupe_pair(cleaned[-1]["text"], s["text"])
+                cleaned[-1]["text"] = new_prev_text
                 if not new_next_text.strip():
                     continue
                 s = dict(s, text=new_next_text)
