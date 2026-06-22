@@ -308,8 +308,10 @@ async def websocket_endpoint(websocket: WebSocket):
                         temps_dans_slot = state.get("time_in_turn", 0) or 1
                         if temps_dans_slot > 0 and nb_mots > 0:
                             vitesse = round(nb_mots / temps_dans_slot, 2)
-                            scheduler.update_typing_speed(user_id, vitesse)
-                            await broadcast_user_list()  # mise à jour admin
+                            # Ne rediffuser la liste que si le temps adapté change
+                            # (évite un broadcast à chaque frappe).
+                            if scheduler.update_typing_speed(user_id, vitesse):
+                                await broadcast_user_list()
                         # ─────────────────────────────────────────────────
 
                         if text.strip():

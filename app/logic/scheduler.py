@@ -109,26 +109,34 @@ class Scheduler:
             u.order_in_pool = i
 
     # ── Adaptation dynamique ───────────────────────────────────────────────
-    def update_typing_speed(self, user_id: str, words_per_second: float):
+    def update_typing_speed(self, user_id: str, words_per_second: float) -> bool:
         """
         Met à jour la vitesse de frappe et adapte le TEMPS D'ÉCRITURE personnel.
         - Rapide (>= 1.5 mots/s) : temps d'écriture allongé de 5s
         - Lent   (<= 0.8 mots/s) : temps d'écriture raccourci de 5s
         - Normal                 : temps d'écriture standard
+
+        Retourne True si le temps d'écriture adapté a changé (utile pour ne
+        rediffuser la liste des users que dans ce cas, au lieu de le faire à
+        chaque frappe).
         """
         user = self.users.get(user_id)
         if not user or user.user_id == ADMIN_ID:
-            return
+            return False
 
         user.typing_speed = round(words_per_second, 2)
         base = self.config.writing_time
 
         if words_per_second >= 1.5:
-            user.writing_time_personal = min(base + 5, base * 2)
+            new_val = min(base + 5, base * 2)
         elif words_per_second <= 0.8:
-            user.writing_time_personal = max(base - 5, max(5, base // 2))
+            new_val = max(base - 5, max(5, base // 2))
         else:
-            user.writing_time_personal = base
+            new_val = base
+
+        changed = new_val != user.writing_time_personal
+        user.writing_time_personal = new_val
+        return changed
 
     # ── Pause ─────────────────────────────────────────────────────────────
     def toggle_pause(self):
