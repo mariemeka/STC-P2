@@ -342,8 +342,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json({
                     "type": "welcome",
                     "user_id": user_id,
-                    "pool_id": user.pool_id,
-                    "order_in_pool": user.order_in_pool,
+                    "order": user.order,
                     "state": scheduler.get_current_state(user_id)
                 })
                 await broadcast_user_list()
@@ -352,15 +351,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 global session_id
                 session_id = f"sess_{int(time.time())}"
                 last_live_save.clear()
-                scheduler.reset_adaptation()
                 scheduler.set_config(
-                    slot_dur=int(msg.get("slot", 8)),
-                    writing_time=int(msg.get("writing_time", 24)),
-                    pools=int(msg.get("pools", 1)),
-                    countdown=int(msg.get("countdown", 3)),
-                    pre_alert=int(msg.get("pre_alert", 5)),
+                    slot_dur=int(msg.get("slot", 6)),
+                    writing_time=int(msg.get("writing_time", 12)),
+                    pre_alert=int(msg.get("pre_alert", 3)),
                 )
-                scheduler.config.start_time = time.time() + scheduler.config.countdown
+                scheduler.config.start_time = time.time()
                 scheduler.config.is_active = True
                 scheduler.config.is_paused = False
                 scheduler.config.total_paused_time = 0.0
@@ -376,9 +372,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
             elif t == "admin_assign":
                 target_id = msg.get("user_id")
-                new_pool = int(msg.get("pool_id", 1))
                 new_order = int(msg.get("order", 0))
-                scheduler.assign_user(target_id, new_pool, new_order)
+                scheduler.assign_user(target_id, new_order)
                 await broadcast_user_list()
                 await broadcast_state("sync_update")
 
@@ -394,7 +389,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     corrected = correct_text(msg["text"], final=True)
                     new_caption = Caption(
                         user_id=user_id,
-                        pool_id=user.pool_id,
+                        pool_id=1,
                         text=corrected,
                         timestamp=time.time(),
                         slot_index=slot_idx,
@@ -402,7 +397,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     save_caption_to_csv(session_id, new_caption)
                     await broadcast({
                         "type": "new_text",
-                        "pool": user.pool_id,
+                        "pool": 1,
                         "text": corrected,
                         "user": user.username,
                         "slot_index": slot_idx,
@@ -419,24 +414,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         slot_idx = state.get("my_slot_index", 0)
                         corrected_live = correct_text(text, final=False)
 
-                        # ── Mesure vitesse de frappe + adaptation ─────────
-                        nb_mots = len(text.split()) if text.strip() else 0
-                        temps_dans_slot = state.get("time_in_turn", 0) or 1
-                        if temps_dans_slot > 0 and nb_mots > 0:
-                            vitesse = round(nb_mots / temps_dans_slot, 2)
-                            # Ne rediffuser la liste que si le temps adapté change
-                            # (évite un broadcast à chaque frappe).
-                            if scheduler.update_typing_speed(user_id, vitesse):
-                                await broadcast_user_list()
-                        # ─────────────────────────────────────────────────
-
                         if text.strip():
                             key = (user_id, slot_idx)
                             now_ts = time.time()
                             if now_ts - last_live_save.get(key, 0) >= LIVE_SAVE_THROTTLE:
                                 save_caption_to_csv(session_id, Caption(
                                     user_id=user_id,
-                                    pool_id=user.pool_id,
+                                    pool_id=1,
                                     text=corrected_live,
                                     timestamp=now_ts,
                                     slot_index=slot_idx,
@@ -445,7 +429,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                         await broadcast_to_viewers({
                             "type": "live_typing",
-                            "pool": user.pool_id,
+                            "pool": 1,
                             "user": user.username,
                             "text": corrected_live,
                             "slot_index": slot_idx,
@@ -458,13 +442,19 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
 
     except WebSocketDisconnect:
+        # IMPORTANT : ne retirer la connexion QUE si c'est encore celle-ci.
+        # Sinon, lors d'un refresh (même user_id), la fermeture de l'ancienne
+        # connexion supprimerait la NOUVELLE qui vient de se reconnecter
+        # -> l'admin ne recevrait plus rien (export/sync cassés).
         if user_id:
-            connections.pop(user_id, None)
-            viewers.pop(user_id, None)
-            scheduler.remove_user(user_id)
-        if not is_viewer:
-            await broadcast_user_list()
-            await broadcast_state("sync_update")
+            if connections.get(user_id) is websocket:
+                connections.pop(user_id, None)
+                scheduler.remove_user(user_id)
+                if not is_viewer:
+                    await broadcast_user_list()
+                    await broadcast_state("sync_update")
+            if viewers.get(user_id) is websocket:
+                viewers.pop(user_id, None)
 
 # ─── BACKGROUND SYNC + KEEPALIVE ──────────────────────────────────────────
 
@@ -504,7 +494,7 @@ async def stop_and_export():
     if not scheduler.config.is_active:
         return
     scheduler.config.is_active = False
-    pool_files = fuse_session(session_id, scheduler.config.num_pools)
+    pool_files = fuse_session(session_id, 1)
     exports = []
     for pool_id, captions in pool_files.items():
 
@@ -532,15 +522,8 @@ async def stop_and_export():
 
 async def broadcast_user_list():
     user_list = [
-        {
-            "id": u.user_id,
-            "name": u.username,
-            "pool": u.pool_id,
-            "order": u.order_in_pool,
-            "speed": u.typing_speed,
-            "personal_writing_time": u.writing_time_personal or 0,
-        }
-        for u in scheduler.users.values()
+        {"id": u.user_id, "name": u.username, "order": u.order}
+        for u in scheduler._subtitlers()
     ]
     await broadcast({"type": "user_update", "users": user_list})
 

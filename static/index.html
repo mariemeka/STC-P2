@@ -134,7 +134,7 @@ function connect() {
       document.getElementById('login').style.display = 'none';
       document.getElementById('app').style.display = 'block';
       document.getElementById('user-display').innerText = username;
-      document.getElementById('pool-display').innerText = `Pool ${msg.pool_id} (ordre ${msg.order_in_pool})`;
+      document.getElementById('pool-display').innerText = `Sous-titreur n°${(msg.order ?? 0) + 1}`;
       applyState(msg.state);
     }
 
