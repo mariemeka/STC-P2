@@ -155,6 +155,7 @@ const liveArea = document.getElementById('live-area');
 let currentUsers = [];
 let liveTypers = {};
 let audioResumed = false;   // pour resynchroniser l'audio après un refresh
+let sessionActive = false;
 
 ws.onopen = () => {
   addLog("Connecté.");
@@ -222,6 +223,7 @@ ws.onmessage = (event) => {
 };
 
 function updateStateDisplay(s) {
+  sessionActive = !!s.active;
   if (!s.active) {
     stateDisplay.innerText = "inactif";
     stateDisplay.className = "state-stopped";
@@ -385,6 +387,31 @@ function pollCorrection() {
   });
 }
 pollCorrection();
+
+// ── Application immédiate des durées quand on les change ────────────────────
+function applyConfig() {
+  ws.send(JSON.stringify({
+    type: "admin_config",
+    slot: document.getElementById('slot').value,
+    writing_time: document.getElementById('writing_time').value,
+    pre_alert: document.getElementById('pre_alert').value,
+  }));
+  checkEnoughSubtitlers();
+  if (sessionActive) {
+    addLog("Réglages appliqués en direct (la session redémarre le minutage).");
+    // resynchronise l'audio sur le nouveau départ (après le délai de préparation)
+    audioResumed = true;
+    const lead = parseInt(document.getElementById('pre_alert').value) || 0;
+    audioPlayer.pause();
+    audioPlayer.currentTime = 0;
+    setTimeout(() => audioPlayer.play().catch(() => {}), lead * 1000);
+  } else {
+    addLog("Réglages enregistrés (appliqués au prochain Démarrer).");
+  }
+}
+['slot', 'writing_time', 'pre_alert'].forEach(id =>
+  document.getElementById(id).addEventListener('change', applyConfig)
+);
 </script>
 </body>
 </html>

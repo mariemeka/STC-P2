@@ -365,6 +365,22 @@ async def websocket_endpoint(websocket: WebSocket):
                 scheduler.config.paused_at = None
                 await broadcast_state("session_started")
 
+            elif t == "admin_config":
+                # Changement de durées : pris en compte tout de suite. Si une
+                # session tourne, on ré-ancre le timing pour appliquer la nouvelle
+                # config en direct (avec le délai de préparation).
+                scheduler.set_config(
+                    slot_dur=int(msg.get("slot", 8)),
+                    writing_time=int(msg.get("writing_time", 20)),
+                    pre_alert=int(msg.get("pre_alert", 3)),
+                )
+                if scheduler.config.is_active:
+                    scheduler.config.start_time = time.time() + scheduler.config.pre_alert
+                    scheduler.config.total_paused_time = 0.0
+                    scheduler.config.paused_at = None
+                    scheduler.config.is_paused = False
+                await broadcast_state("sync_update")
+
             elif t == "admin_pause":
                 scheduler.toggle_pause()
                 await broadcast_state("session_paused")
