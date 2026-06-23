@@ -38,6 +38,12 @@ class TestRelais(unittest.TestCase):
         s.config.start_time = base - 14   # slot 2 -> u0 reprend
         self.assertTrue(s.get_current_state("u0")["is_my_turn"])
 
+    def test_deux_soustitreurs_passent_la_main(self):
+        # writing 12 > slot, 2 sous-titreurs : doit alterner (pas de frappe infinie)
+        s = self._session(2, 6, 12, elapsed=7)   # slot 1 -> u1, u0 au repos
+        self.assertFalse(s.get_current_state("u0")["is_my_turn"])
+        self.assertTrue(s.get_current_state("u1")["is_my_turn"])
+
     def test_borne_anti_frappe_infinie(self):
         # n=1, writing 24 >> slot 6 -> fenêtre bornée au slot, le tour avance
         s = self._session(1, 6, 24, elapsed=7)

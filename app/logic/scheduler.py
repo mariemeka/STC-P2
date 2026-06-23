@@ -113,10 +113,12 @@ class Scheduler:
             n = len(self._subtitlers())
             if n > 0:
                 order = user.order
-                # Borne anti-"frappe infinie" : la fenêtre d'écriture ne dépasse
-                # jamais n*slot (sinon les tours d'un même sous-titreur se
-                # chevauchent quand il n'y a pas assez de monde pour le relais).
-                wt = min(cfg.writing_time, n * slot_dur)
+                # Borne anti-"frappe infinie" : pour qu'un sous-titreur PASSE
+                # vraiment la main, sa fenêtre d'écriture doit laisser au moins un
+                # slot de repos avant son prochain tour -> on borne à (n-1)*slot
+                # (plancher = 1 slot). Avec 1 seul sous-titreur, il tape en continu
+                # (personne à qui passer la main, c'est normal).
+                wt = max(slot_dur, min(cfg.writing_time, (n - 1) * slot_dur))
                 # Segment le plus récent appartenant à ce sous-titreur
                 k_active = global_slot_index - ((global_slot_index - order) % n)
                 if k_active >= 0:
