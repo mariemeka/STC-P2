@@ -39,18 +39,17 @@ class TestRelais(unittest.TestCase):
         self.assertTrue(s.get_current_state("u0")["is_my_turn"])
 
     def test_deux_soustitreurs_passent_la_main(self):
-        # writing 10 > slot 8, 2 sous-titreurs : il existe un moment de repos pour u0
-        s = self._session(2, 8, 10, elapsed=13)   # u0 [0,10] fini, u1 actif
+        # writing 12 > slot 6, 2 sous-titreurs -> borné à (n-1)*slot=6, alternance
+        s = self._session(2, 6, 12, elapsed=7)   # slot 1 -> u1 ; u0 au repos
         self.assertFalse(s.get_current_state("u0")["is_my_turn"])
         self.assertTrue(s.get_current_state("u1")["is_my_turn"])
 
-    def test_temps_complet_si_assez_de_monde(self):
-        # 3 sous-titreurs, slot 8, écriture 20 : 20 < 3*8=24 -> on garde bien ~20s
-        # (et NON 16 = (n-1)*slot). Repos = 24-20 = 4s.
-        s = self._session(3, 8, 20, elapsed=1)    # u0 en plein tour (slot 0)
+    def test_borne_garantit_un_cycle(self):
+        # 3 sous-titreurs, slot 8, écriture 20 -> borné à (n-1)*slot = 16 (cycle sûr)
+        s = self._session(3, 8, 20, elapsed=1)
         st = s.get_current_state("u0")
         self.assertTrue(st["is_my_turn"])
-        self.assertGreater(st["time_left"], 16)   # ~19s, pas bridé à 16
+        self.assertLessEqual(st["time_left"], 16)
 
     def test_borne_anti_frappe_infinie(self):
         # n=1, writing 24 >> slot 6 -> fenêtre bornée au slot, le tour avance
