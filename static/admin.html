@@ -65,9 +65,9 @@
   <legend>Paramètres</legend>
   <div class="grid">
     <label>Slot — temps d'écoute (s) :</label>
-    <input type="number" id="slot" value="6" min="1">
+    <input type="number" id="slot" value="8" min="1">
     <label>Temps d'écriture (s) :</label>
-    <input type="number" id="writing_time" value="12" min="1">
+    <input type="number" id="writing_time" value="20" min="1">
     <label>Préavis (s) :</label>
     <input type="number" id="pre_alert" value="3" min="0">
   </div>
@@ -297,9 +297,17 @@ function send(type) {
   if (type === 'admin_start') {
     audioResumed = true;          // c'est nous qui lançons l'audio
     audioPlayer.currentTime = 0;
-    audioPlayer.play()
+    const lead = parseInt(document.getElementById('pre_alert').value) || 0;
+    const startAudio = () => audioPlayer.play()
       .then(() => { audioStatus.textContent = "Audio en cours"; audioStatus.style.color = "#2c7a2c"; })
       .catch(() => { audioStatus.textContent = "Cliquez Play sur le player"; audioStatus.style.color = "#d63f00"; addLog("Autoplay bloqué — cliquez Play manuellement."); });
+    if (lead > 0) {
+      audioStatus.textContent = `Préparation… audio dans ${lead}s`;
+      audioStatus.style.color = "#b87000";
+      setTimeout(startAudio, lead * 1000);
+    } else {
+      startAudio();
+    }
   }
 
   if (type === 'admin_pause') {

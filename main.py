@@ -352,11 +352,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 session_id = f"sess_{int(time.time())}"
                 last_live_save.clear()
                 scheduler.set_config(
-                    slot_dur=int(msg.get("slot", 6)),
-                    writing_time=int(msg.get("writing_time", 12)),
+                    slot_dur=int(msg.get("slot", 8)),
+                    writing_time=int(msg.get("writing_time", 20)),
                     pre_alert=int(msg.get("pre_alert", 3)),
                 )
-                scheduler.config.start_time = time.time()
+                # Délai de préparation avant le 1er slot = durée du préavis, pour
+                # que le premier sous-titreur ait aussi son compte à rebours.
+                scheduler.config.start_time = time.time() + scheduler.config.pre_alert
                 scheduler.config.is_active = True
                 scheduler.config.is_paused = False
                 scheduler.config.total_paused_time = 0.0

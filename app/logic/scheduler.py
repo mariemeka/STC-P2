@@ -4,8 +4,8 @@ from pydantic import BaseModel
 
 
 class SessionConfig(BaseModel):
-    slot_duration: int = 6      # "temps d'écoute" : durée d'un segment (sert aussi au découpage SRT)
-    writing_time: int = 12      # "temps d'écriture" : durée totale pour taper son segment
+    slot_duration: int = 8      # "temps d'écoute" : durée d'un segment (sert aussi au découpage SRT)
+    writing_time: int = 20      # "temps d'écriture" : durée totale pour taper son segment
     pre_alert: int = 3          # préavis (s) avant le début du tour
     start_time: Optional[float] = None
     paused_at: Optional[float] = None
@@ -94,9 +94,24 @@ class Scheduler:
 
         now = cfg.paused_at if cfg.is_paused else time.time()
         elapsed = now - cfg.start_time - cfg.total_paused_time
-        if elapsed < 0:
-            elapsed = 0.0
         slot_dur = cfg.slot_duration
+
+        # Phase de préparation AVANT le tout début : chaque sous-titreur (y compris
+        # le 1er) a un compte à rebours "À vous dans..." avant son premier tour.
+        if elapsed < 0:
+            next_turn_in = None
+            if user_id and user_id in self.users and user_id != ADMIN_ID:
+                n = len(self._subtitlers())
+                if n > 0:
+                    order = self.users[user_id].order
+                    next_turn_in = round(order * slot_dur - elapsed, 1)
+            return {
+                "active": True, "paused": cfg.is_paused, "starting": True,
+                "time_left": 0, "is_my_turn": False,
+                "slot_index": 0, "my_slot_index": 0,
+                "next_turn_in": next_turn_in, "elapsed": round(elapsed, 1),
+                "config": cfg.model_dump(),
+            }
 
         global_slot_index = int(elapsed // slot_dur)
         e_in_slot = elapsed % slot_dur
